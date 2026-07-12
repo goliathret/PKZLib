@@ -1,6 +1,18 @@
 #pragma once
 #include <algorithm>
 
+template<typename T>
+inline T BUMin(T a, T b)
+{
+    return (a < b) ? a : b;
+}
+
+template<typename T>
+inline T BUMax(T a, T b)
+{
+    return (a > b) ? a : b;
+}
+
 class BUVector2
 {
 public:
