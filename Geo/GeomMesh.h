@@ -10,6 +10,8 @@ class RZGeomPrim : public CMChunk
 public:
     enum VertexFormatFlags : uint32_t
     {
+        VF_HasColor = 0x0002,
+        VF_UVCountMask = 0x00E0,
         VF_BlendMask        = 0x0700, // Bits 8-10: number/type of bone influences
         VF_HardwareSkinning = 0x0800, // Hardware skinning enabled
         VF_HasNormals       = 0x1000, // Packed normal present
