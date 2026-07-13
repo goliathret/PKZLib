@@ -5,5 +5,3 @@ This includes chunk handling, and a *Package Manager* for multiple package files
 ## BaseUtils
 BaseUtils is what powers the Goliath Engine's math, logic, and any algorithms implemented in the games. PKZLib contains accurate recreations of the BaseUtils system.
 
-#### Third Party:
-- zlib - https://github.com/madler/zlib
