@@ -1,10 +1,13 @@
 #pragma once
 
+#include <cmath>
+
 class BUTruncate
 {
 public:
+
     static inline float FtoF(float f)
     {
-        return (float)((int)f);
+        return std::trunc(f);
     }
 };
