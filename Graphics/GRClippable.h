@@ -3,6 +3,8 @@
 
 #include "../BaseUtils/BUBox.h"
 
+class GRClippable;
+
 class GRClipTreeNode
 {
     BUBox mBBox;

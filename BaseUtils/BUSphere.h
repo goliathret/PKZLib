@@ -68,11 +68,13 @@ public:
 
             if (mfRadius * mfRadius < distSq)
             {
+
                 float dist = sqrtf(distSq);
+                float oldRadius = mfRadius;
 
-                mfRadius = 0.5f * (mfRadius + dist);
+                mfRadius = 0.5f * (oldRadius + dist);
 
-                diff = diff * (0.5f * (dist - mfRadius) / dist);
+                diff = diff * (0.5f * (dist - oldRadius) / dist);
                 mOrigin += diff;
             }
         }
@@ -123,6 +125,10 @@ public:
 
     bool IsIntersectingCone(const BUVector3& _vPos, const BUVector3& _vAt, float _fRad, float _fLength) const
     {
+        if (_fLength <= 0.0f) {
+            return false;
+        }
+
         BUVector3 vRelative = mOrigin - _vPos;
         float fProjectPos = BUVector3::Dot(vRelative, _vAt);
 
@@ -143,14 +149,6 @@ public:
     bool IsOverlapping(const BUSphere& _sphere) const
     {
         return IsOverlapping(_sphere.mOrigin, _sphere.mfRadius);
-    }
-
-    bool IsOverlapping(const BUVector3& _center, float _fRadius) const
-    {
-        BUVector3 dif = mOrigin - _center;
-        float distSq = dif.LengthSquared();
-        float radiusSumSq = (mfRadius + _fRadius) * (mfRadius + _fRadius);
-        return distSq < radiusSumSq;
     }
 
     void MostSeparatedPointsOnAABB(uint32_t* _uiMin, uint32_t* _uiMax, const BUVector3* _pPoints, uint32_t _uiNbPoints)

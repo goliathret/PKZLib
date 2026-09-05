@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <cmath>
 
 template<typename T>
 inline T BUMin(T a, T b)
@@ -137,7 +138,7 @@ public:
         y = _y;
         z = _z;
     }
-    
+
     void Set(float _fVal)
     {
         x = _fVal;
@@ -239,6 +240,28 @@ public:
     static float Dot(const BUVector3& a, const BUVector3& b)
     {
         return a.Dot(b);
+    }
+
+    BUVector3 Cross(const BUVector3& rhs) const
+    {
+        return BUVector3(y * rhs.z - z * rhs.y, z * rhs.x - x * rhs.z, x * rhs.y - y * rhs.x);
+    }
+
+    static BUVector3 Cross(const BUVector3& a, const BUVector3& b)
+    {
+        return a.Cross(b);
+    }
+
+    friend BUVector3 operator^(const BUVector3& lhs, const BUVector3& rhs)
+    {
+        return lhs.Cross(rhs);
+    }
+
+    void Normalize()
+    {
+        const float len = Length();
+        if (len > 0.0f)
+            *this /= len;
     }
 
     void Min(const BUVector3& rhs)
