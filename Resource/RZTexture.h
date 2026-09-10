@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "../BaseUtils/BUCRC.h"
+#include "../BaseUtils/BUDds.h"
 #include "../Graphics/XenosTexture.h"
 #include "../Package/CMChunk.h"
 #include "../Package/PKPackage.h"
@@ -159,6 +160,47 @@ public:
 
         const size_t padded = (t.gpuData.size() + 0x3FFF) & ~size_t(0x3FFF);
         t.gpuData.resize(padded, 0);
+        return t;
+    }
+
+    static RZTexture FromDds(const std::string& name, const std::vector<uint8_t>& file, bool baseLevelOnly = false)
+    {
+        BUDds::Image img = BUDds::Decode(file);
+        if (baseLevelOnly && img.levels.size() > 1)
+            img.levels.resize(1);
+        uint32_t format = XenosTexture::kFormat_DXT4_5;
+        if (img.fourCC == BUDds::kDXT1)
+            format = XenosTexture::kFormat_DXT1;
+        else if (img.fourCC == BUDds::kDXT3)
+            format = XenosTexture::kFormat_DXT2_3;
+
+        RZTexture t;
+        t.name = name;
+        t.nameCRC = BUCRC().Generate(name);
+        t.desc.dimension = 1;
+        t.desc.width = img.width;
+        t.desc.height = img.height;
+        t.desc.mipLevels = static_cast<uint32_t>(img.levels.size());
+        t.desc.d3dFormat = (XenosTexture::D3DFormat::kDXT5Tiled & ~0x3Fu) | format;
+        const XenosTexture::D3DFormat f = t.desc.Format();
+
+        for (size_t i = 0; i < img.levels.size(); ++i)
+        {
+            const BUDds::Level& level = img.levels[i];
+            const uint32_t blocksW = (level.width + 3) / 4;
+            const uint32_t blocksH = (level.height + 3) / 4;
+            if (blocksW < 32 || blocksH < 32)
+                throw std::runtime_error("RZTexture::FromDds: level " + std::to_string(i) + " of " + name +
+                                         " is smaller than one tile; the console packs those into a mip tail this "
+                                         "packer does not write");
+            const std::vector<uint8_t> tiled = XenosTexture::Tile(level.data.data(), level.width, level.height, f);
+            if (i == 1)
+                t.desc.mipChainOffset = static_cast<uint32_t>(t.gpuData.size());
+            t.gpuData.insert(t.gpuData.end(), tiled.begin(), tiled.end());
+        }
+
+        const BUDds::Level& last = img.levels.back();
+        t.desc.minLevelSize = (last.width << 16) | last.height;
         return t;
     }
 
