@@ -9,6 +9,7 @@
 
 #include "../BaseUtils/BUPng.h"
 #include "../Package/PKPackageBuilder.h"
+#include "../Resource/RZFont.h"
 #include "../Resource/RZStringTable.h"
 #include "../Resource/RZTextStyle.h"
 #include "../Resource/RZTexture.h"
@@ -106,6 +107,22 @@ namespace pkztool
         throw std::runtime_error("no text style named " + retailName + " in " + pakPath);
     }
 
+    inline RZFont CopyFont(const std::string& pakPath, const std::string& retailName, const std::string& newName,
+                           const std::string& atlas, bool littleEndian)
+    {
+        PKPackage pkg;
+        pkg.isLittleEndian = littleEndian;
+        pkg.ReadFromFile(pakPath);
+        for (const RZFont& f : RZFont::All(pkg))
+        {
+            if (f.name != retailName)
+                continue;
+            RZFont copy = f.Renamed(newName);
+            return atlas.empty() ? copy : copy.WithAtlas(atlas);
+        }
+        throw std::runtime_error("no font named " + retailName + " in " + pakPath);
+    }
+
     inline bool ParseFloats(const std::string& v, float* out, size_t n)
     {
         std::istringstream is(v);
@@ -198,6 +215,14 @@ namespace pkztool
                 stringsFile = Resolve(t[1], dir, paksDir);
             else if (t[0] == "texture" && t.size() >= 5 && t[2] == "from")
                 b.textures.push_back(CopyTexture(Resolve(t[3], dir, paksDir), t[4], t[1], littleEndian));
+            else if (t[0] == "texture" && t.size() >= 4 && t[2] == "dds")
+            {
+                std::ifstream f(Resolve(t[3], dir, paksDir), std::ios::binary);
+                if (!f)
+                    throw std::runtime_error(where + "cannot open " + t[3]);
+                const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+                b.textures.push_back(RZTexture::FromDds(t[1], bytes, t.size() >= 5 && t[4] == "nomips"));
+            }
             else if (t[0] == "texture" && t.size() >= 4 && t[2] == "png")
             {
                 std::ifstream f(Resolve(t[3], dir, paksDir), std::ios::binary);
@@ -206,6 +231,14 @@ namespace pkztool
                 const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
                 const BUPng::Image img = BUPng::Decode(bytes.data(), bytes.size());
                 b.textures.push_back(RZTexture::FromRGBA8(t[1], img.rgba.data(), img.width, img.height));
+            }
+            else if (t[0] == "font" && t.size() >= 5 && t[2] == "from")
+            {
+                std::string atlas;
+                for (size_t i = 5; i < t.size(); ++i)
+                    if (t[i].rfind("atlas=", 0) == 0)
+                        atlas = t[i].substr(6);
+                b.fonts.push_back(CopyFont(Resolve(t[3], dir, paksDir), t[4], t[1], atlas, littleEndian));
             }
             else if (t[0] == "textstyle" && t.size() >= 5 && t[2] == "from")
                 b.textStyles.push_back(CopyTextStyle(Resolve(t[3], dir, paksDir), t[4], t[1], littleEndian));
@@ -231,6 +264,9 @@ namespace pkztool
         for (const RZTexture& t : b.textures)
             std::printf("  texture   %-40s crc %08X %ux%u %s, %zu bytes\n", t.name.c_str(), t.nameCRC, t.desc.width, t.desc.height,
                         t.desc.Format().Name(), t.gpuData.size());
+        for (const RZFont& f : b.fonts)
+            std::printf("  font      %-40s crc %08X %zu glyphs, atlas %08X\n", f.name.c_str(), f.nameCRC,
+                        f.glyphs.size(), f.textureCRC);
         for (const RZTextStyle& s : b.textStyles)
             std::printf("  textstyle %-40s crc %08X font %08X\n", s.name.c_str(), s.nameCRC, s.fontCRC);
         for (const RZHudWindow& w : b.windows)
