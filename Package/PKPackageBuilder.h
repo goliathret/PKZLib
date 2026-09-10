@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "../Resource/RZFont.h"
 #include "../Resource/RZHud.h"
 #include "../Resource/RZStringTable.h"
 #include "../Resource/RZTextStyle.h"
@@ -26,6 +27,7 @@ public:
 
     std::vector<RZStringTable> stringTables;
     std::vector<RZTexture> textures;
+    std::vector<RZFont> fonts;
     std::vector<RZHudWindow> windows;
     std::vector<RZTextStyle> textStyles;
 
@@ -95,6 +97,11 @@ private:
                 for (size_t i = 0; i < textures.size(); ++i)
                     lib.AddChild(textures[i].BuildLibraryResource(textureOffsets[i], littleEndian));
                 root.AddChild(std::move(lib));
+                continue;
+            }
+            if (slot.id == Gen_FontLibrary && !fonts.empty())
+            {
+                root.AddChild(RZFont::BuildLibrary(fonts, littleEndian));
                 continue;
             }
             if (slot.id == Gen_TextStyleLibrary && !textStyles.empty())
