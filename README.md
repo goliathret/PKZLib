@@ -8,3 +8,15 @@ This includes chunk handling, and a *Package Manager* for multiple package files
 ## BaseUtils
 BaseUtils is what powers the Goliath Engine's math, logic, and any algorithms implemented in the games. PKZLib contains accurate recreations of the BaseUtils system.
 
+## Building
+
+Header-only C++17; zlib (`contrib/zlib`) is needed for the `.pkz` container.
+
+```
+git submodule update --init
+cmake -S . -B out -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build out
+out/pkzlib_selftest
+```
+
+Consumers link the `pkzlib` INTERFACE target
