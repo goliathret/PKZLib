@@ -34,13 +34,22 @@ public:
         if (packageId == 0 || packageId >= 4096)
             throw std::runtime_error("PKPackageBuilder: package id must be 1..4095");
 
-        PKPackage pass1 = Assemble(std::vector<uint64_t>(textures.size(), 0));
-        std::vector<uint64_t> offsets(textures.size());
-        uint64_t off = pass1.rootChunks.front().SerializedSize();
-        for (size_t i = 0; i < textures.size(); ++i)
+        const PKPackage pass1 = Assemble(std::vector<uint64_t>(textures.size(), 0));
+        const CMChunk& root = pass1.rootChunks.front();
+        const size_t nbTextures = textures.size();
+        if (root.children.size() < nbTextures)
+            throw std::runtime_error("PKPackageBuilder: the post-load chunks are missing");
+
+        const size_t firstPostLoad = root.children.size() - nbTextures;
+        uint64_t off = root.HeaderSize();
+        for (size_t i = 0; i < firstPostLoad; ++i)
+            off += root.children[i].SerializedSize();
+
+        std::vector<uint64_t> offsets(nbTextures);
+        for (size_t i = 0; i < nbTextures; ++i)
         {
             offsets[i] = off;
-            off += pass1.rootChunks[1 + i].SerializedSize();
+            off += root.children[firstPostLoad + i].SerializedSize();
         }
 
         return Assemble(offsets);
@@ -113,9 +122,9 @@ private:
             }
             root.AddChild(std::move(lib));
         }
-        pkg.rootChunks.push_back(std::move(root));
         for (size_t i = 0; i < textures.size(); ++i)
-            pkg.rootChunks.push_back(textures[i].BuildPostLoadData(textureOffsets[i], littleEndian));
+            root.AddChild(textures[i].BuildPostLoadData(textureOffsets[i], littleEndian));
+        pkg.rootChunks.push_back(std::move(root));
         return pkg;
     }
 };

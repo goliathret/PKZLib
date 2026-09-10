@@ -256,6 +256,17 @@ public:
         }
 
         const uint32_t nbSectors = static_cast<uint32_t>(sectors.size());
+        uint32_t maxSectorSpan = 0;
+        {
+            uint64_t previous = 0;
+            for (uint64_t v : table)
+            {
+                maxSectorSpan = std::max<uint32_t>(maxSectorSpan, static_cast<uint32_t>(v - previous));
+                previous = v;
+            }
+            if (maxSectorSpan == 0)
+                maxSectorSpan = opt.sectorSize;
+        }
         const uint64_t nbUncompSectors = (uint64_t(size) + opt.sectorSize - 1) / opt.sectorSize;
         std::vector<uint32_t> lookup(static_cast<size_t>(nbUncompSectors));
         {
@@ -300,7 +311,7 @@ public:
         put32(BUDecompress::kMagic);
         put32(opt.sectorSize);
         put32(static_cast<uint32_t>(headerSize));
-        put32(opt.bigChunkSize);
+        put32(maxSectorSpan);
         if (opt.bigEndian32)
         {
             put32(nbSectors);
