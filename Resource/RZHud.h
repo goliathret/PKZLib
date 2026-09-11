@@ -203,6 +203,15 @@ public:
         return w;
     }
 
+    void Offset(float dx, float dy)
+    {
+        for (Layout& layout : layouts)
+        {
+            layout.header.x += dx;
+            layout.header.y += dy;
+        }
+    }
+
     void SetTexture(uint32_t textureCRC)
     {
         for (Layout& l : layouts)

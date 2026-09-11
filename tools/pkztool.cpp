@@ -345,6 +345,7 @@ int main(int argc, char** argv)
         if (cmd == "font" && rest >= 1) return pkztool::Font(argv[i], rest >= 2 ? argv[i + 1] : "", gLittleEndian);
         if (cmd == "font-atlas" && rest >= 3) return pkztool::FontAtlas(argv[i], argv[i + 1], argv[i + 2], gLittleEndian);
         if (cmd == "hud" && rest >= 1) return pkztool::Hud(argv[i], rest >= 2 ? argv[i + 1] : "", gLittleEndian);
+        if (cmd == "styles" && rest >= 1) return pkztool::Styles(argv[i], gLittleEndian);
         if (cmd == "make" && rest >= 2)
         {
             std::string paks;
