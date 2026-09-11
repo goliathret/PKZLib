@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -8,6 +9,7 @@
 #include "../Package/PKPackage.h"
 #include "../Resource/RZFont.h"
 #include "../Resource/RZHud.h"
+#include "../Resource/RZTextStyle.h"
 #include "../Resource/RZTexture.h"
 
 namespace pkztool
@@ -61,6 +63,36 @@ namespace pkztool
         }
         if (!n)
             std::printf("no fonts%s\n", only.empty() ? "" : " with that name");
+        return 0;
+    }
+
+    inline int Styles(const std::string& path, bool littleEndian)
+    {
+        PKPackage pkg;
+        pkg.isLittleEndian = littleEndian;
+        pkg.ReadFromFile(path);
+        const auto names = NameTable(pkg);
+        int n = 0;
+        for (const RZTextStyle& s : RZTextStyle::All(pkg))
+        {
+            ++n;
+            std::printf("== %s (crc %08X) font %s v%u:", s.name.c_str(), s.nameCRC, NameOf(names, s.fontCRC).c_str(), s.infoVersion);
+            for (size_t off = 0; off + 4 <= s.info.size(); off += 4)
+            {
+                uint32_t u = 0;
+                for (size_t k = 0; k < 4; ++k)
+                    u = (u << 8) | s.info[off + k];
+                float f;
+                std::memcpy(&f, &u, 4);
+                if (u < 0x10000u || (f > -1e5f && f < 1e5f && (f > 1e-5f || f < -1e-5f)))
+                    std::printf(" %s", u < 0x10000u ? std::to_string(u).c_str() : std::to_string(f).c_str());
+                else
+                    std::printf(" %08X", u);
+            }
+            std::printf("\n");
+        }
+        if (!n)
+            std::printf("no text styles\n");
         return 0;
     }
 
