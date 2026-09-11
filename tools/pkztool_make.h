@@ -123,6 +123,42 @@ namespace pkztool
         throw std::runtime_error("no font named " + retailName + " in " + pakPath);
     }
 
+    inline RZTexture BuildAtlas(const std::string& dir, uint32_t columns, uint32_t slots, const std::string& name)
+    {
+        if (!columns || !slots)
+            throw std::runtime_error("atlas needs a column count and at least one slot");
+        uint32_t cell = 0, height = 0;
+        std::vector<uint8_t> sheet;
+        const uint32_t rows = (slots + columns - 1) / columns;
+        for (uint32_t slot = 0; slot < slots; ++slot)
+        {
+            const std::string path = dir + "/" + std::to_string(slot + 1) + ".png";
+            std::ifstream f(path, std::ios::binary);
+            if (!f)
+                throw std::runtime_error("atlas: cannot open " + path);
+            const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            const BUPng::Image img = BUPng::Decode(bytes.data(), bytes.size());
+            if (!cell)
+            {
+                if (img.width != img.height)
+                    throw std::runtime_error("atlas: " + path + " is not square");
+                cell = img.width;
+                height = cell * rows;
+                sheet.assign(size_t(cell) * columns * height * 4, 0);
+            }
+            else if (img.width != cell || img.height != cell)
+            {
+                throw std::runtime_error("atlas: " + path + " does not match the first cell's size");
+            }
+            const uint32_t x = (slot % columns) * cell;
+            const uint32_t y = (slot / columns) * cell;
+            for (uint32_t row = 0; row < cell; ++row)
+                std::memcpy(sheet.data() + ((size_t(y + row) * cell * columns) + x) * 4,
+                            img.rgba.data() + size_t(row) * cell * 4, size_t(cell) * 4);
+        }
+        return RZTexture::FromRGBA8(name, sheet.data(), cell * columns, height);
+    }
+
     inline bool ParseFloats(const std::string& v, float* out, size_t n)
     {
         std::istringstream is(v);
@@ -185,7 +221,7 @@ namespace pkztool
         PKPackageBuilder b;
         b.littleEndian = littleEndian;
         bool compress = false;
-        std::string stringsFile;
+        std::vector<std::pair<std::string, std::string>> stringFiles;
         std::string line;
         int lineNo = 0;
         while (std::getline(mf, line))
@@ -212,7 +248,8 @@ namespace pkztool
                     b.languages.push_back(static_cast<uint32_t>(std::strtoul(t[i].c_str(), nullptr, 0)));
             }
             else if (t[0] == "strings" && t.size() >= 2)
-                stringsFile = Resolve(t[1], dir, paksDir);
+                stringFiles.emplace_back(Resolve(t[1], dir, paksDir),
+                                         t.size() >= 3 ? t[2] : std::string());
             else if (t[0] == "texture" && t.size() >= 5 && t[2] == "from")
                 b.textures.push_back(CopyTexture(Resolve(t[3], dir, paksDir), t[4], t[1], littleEndian));
             else if (t[0] == "texture" && t.size() >= 4 && t[2] == "dds")
@@ -222,6 +259,12 @@ namespace pkztool
                     throw std::runtime_error(where + "cannot open " + t[3]);
                 const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
                 b.textures.push_back(RZTexture::FromDds(t[1], bytes, t.size() >= 5 && t[4] == "nomips"));
+            }
+            else if (t[0] == "texture" && t.size() >= 6 && t[2] == "atlas")
+            {
+                const uint32_t columns = static_cast<uint32_t>(std::strtoul(t[3].c_str(), nullptr, 0));
+                const uint32_t slots = static_cast<uint32_t>(std::strtoul(t[4].c_str(), nullptr, 0));
+                b.textures.push_back(BuildAtlas(Resolve(t[5], dir, paksDir), columns, slots, t[1]));
             }
             else if (t[0] == "texture" && t.size() >= 4 && t[2] == "png")
             {
@@ -244,6 +287,39 @@ namespace pkztool
                 b.textStyles.push_back(CopyTextStyle(Resolve(t[3], dir, paksDir), t[4], t[1], littleEndian));
             else if (t[0] == "window" && t.size() >= 2)
                 b.windows.push_back(ParseWindow(t, where));
+            else if (t[0] == "windowgrid" && t.size() >= 4)
+            {
+                const uint32_t columns = static_cast<uint32_t>(std::strtoul(t[2].c_str(), nullptr, 0));
+                const uint32_t count = static_cast<uint32_t>(std::strtoul(t[3].c_str(), nullptr, 0));
+                float step[2] = { 0, 0 };
+                std::vector<std::string> shared{ t[0], t[1] };
+                for (size_t i = 4; i < t.size(); ++i)
+                {
+                    if (t[i].rfind("step=", 0) == 0)
+                    {
+                        if (!ParseFloats(t[i].substr(5), step, 2))
+                            throw std::runtime_error(where + "bad step");
+                    }
+                    else
+                    {
+                        shared.push_back(t[i]);
+                    }
+                }
+                if (!columns || !count)
+                    throw std::runtime_error(where + "windowgrid needs a column count and a cell count");
+                for (uint32_t cell = 0; cell < count; ++cell)
+                {
+                    std::vector<std::string> one = shared;
+                    char suffix[8];
+                    std::snprintf(suffix, sizeof(suffix), "%02u", cell);
+                    one[1] = t[1] + suffix;
+                    RZHudWindow w = ParseWindow(one, where);
+                    const float dx = step[0] * static_cast<float>(cell % columns);
+                    const float dy = step[1] * static_cast<float>(cell / columns);
+                    w.Offset(dx, dy);
+                    b.windows.push_back(std::move(w));
+                }
+            }
             else if (t[0] == "compress" && t.size() >= 2)
                 compress = (t[1] == "true" || t[1] == "1" || t[1] == "yes");
             else
@@ -251,8 +327,8 @@ namespace pkztool
         }
         if (!b.packageId || b.packageName.empty())
             throw std::runtime_error("manifest needs a `package <id> <name>` line");
-        if (!stringsFile.empty())
-            b.stringTables.push_back(LoadStrings(stringsFile, b.packageName, 0x1F));
+        for (const std::pair<std::string, std::string>& file : stringFiles)
+            b.stringTables.push_back(LoadStrings(file.first, file.second.empty() ? b.packageName : file.second, 0x1F));
 
         const PKPackage pkg = b.Build();
         pkg.WriteToFile(outPath, compress);
