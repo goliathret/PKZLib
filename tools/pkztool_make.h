@@ -221,7 +221,13 @@ namespace pkztool
         PKPackageBuilder b;
         b.littleEndian = littleEndian;
         bool compress = false;
-        std::vector<std::pair<std::string, std::string>> stringFiles;
+        struct StringFile
+        {
+            std::string path;
+            std::string table;
+            uint32_t languageMask;
+        };
+        std::vector<StringFile> stringFiles;
         std::string line;
         int lineNo = 0;
         while (std::getline(mf, line))
@@ -248,8 +254,17 @@ namespace pkztool
                     b.languages.push_back(static_cast<uint32_t>(std::strtoul(t[i].c_str(), nullptr, 0)));
             }
             else if (t[0] == "strings" && t.size() >= 2)
-                stringFiles.emplace_back(Resolve(t[1], dir, paksDir),
-                                         t.size() >= 3 ? t[2] : std::string());
+            {
+                StringFile file{ Resolve(t[1], dir, paksDir), std::string(), 0x1F };
+                for (size_t i = 2; i < t.size(); ++i)
+                {
+                    if (t[i].rfind("lang=", 0) == 0)
+                        file.languageMask = static_cast<uint32_t>(std::strtoul(t[i].c_str() + 5, nullptr, 0));
+                    else
+                        file.table = t[i];
+                }
+                stringFiles.push_back(std::move(file));
+            }
             else if (t[0] == "texture" && t.size() >= 5 && t[2] == "from")
                 b.textures.push_back(CopyTexture(Resolve(t[3], dir, paksDir), t[4], t[1], littleEndian));
             else if (t[0] == "texture" && t.size() >= 4 && t[2] == "dds")
@@ -327,8 +342,8 @@ namespace pkztool
         }
         if (!b.packageId || b.packageName.empty())
             throw std::runtime_error("manifest needs a `package <id> <name>` line");
-        for (const std::pair<std::string, std::string>& file : stringFiles)
-            b.stringTables.push_back(LoadStrings(file.first, file.second.empty() ? b.packageName : file.second, 0x1F));
+        for (const StringFile& file : stringFiles)
+            b.stringTables.push_back(LoadStrings(file.path, file.table.empty() ? b.packageName : file.table, file.languageMask));
 
         const PKPackage pkg = b.Build();
         pkg.WriteToFile(outPath, compress);
@@ -336,7 +351,8 @@ namespace pkztool
         std::printf("%s: package %u (0x%X) \"%s\"%s\n", outPath.c_str(), b.packageId, b.packageId, b.packageName.c_str(),
                     compress ? ", compressed container" : "");
         for (const RZStringTable& s : b.stringTables)
-            std::printf("  strings   %-40s %zu entries, handles 0x%08X + id\n", s.name.c_str(), s.entries.size(), b.packageId << 20);
+            std::printf("  strings   %-40s %zu entries, languages 0x%02X, handles 0x%08X + id\n", s.name.c_str(), s.entries.size(),
+                        s.languageMask, b.packageId << 20);
         for (const RZTexture& t : b.textures)
             std::printf("  texture   %-40s crc %08X %ux%u %s, %zu bytes\n", t.name.c_str(), t.nameCRC, t.desc.width, t.desc.height,
                         t.desc.Format().Name(), t.gpuData.size());
