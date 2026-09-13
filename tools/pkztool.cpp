@@ -187,6 +187,68 @@ namespace
         return 0;
     }
 
+    std::string EscapeText(const std::u16string& text)
+    {
+        std::string out;
+        for (char c : RZStringTable::ToUtf8(text))
+        {
+            if (c == '\\') out += "\\\\";
+            else if (c == '\n') out += "\\n";
+            else if (c == '\r') out += "\\r";
+            else if (c == '\t') out += "\\t";
+            else out += c;
+        }
+        return out;
+    }
+
+    int ExportStrings(const std::string& path, const std::string& outPath, uint32_t languageMask)
+    {
+        PKPackage pkg;
+        pkg.isLittleEndian = gLittleEndian;
+        pkg.ReadFromFile(path);
+        uint32_t packageId = 0;
+        for (const auto& root : pkg.rootChunks)
+        {
+            if (const CMChunk* h = root.FindChild(Gen_LevelHeader))
+            {
+                size_t off = 0;
+                packageId = h->Read<uint32_t>(off);
+                break;
+            }
+        }
+        std::ofstream out(outPath, std::ios::binary | std::ios::app);
+        if (!out)
+            throw std::runtime_error("cannot open " + outPath);
+        size_t rows = 0;
+        uint32_t tableIndex = 0;
+        for (const auto& root : pkg.rootChunks)
+        {
+            for (const CMChunk* lib : root.FindChildren(Gen_StringTableLibrary))
+            {
+                for (const RZStringTable& t : RZStringTable::ParseLibrary(*lib))
+                {
+                    if (t.languageMask && !(t.languageMask & languageMask))
+                        continue;
+                    for (size_t i = 0; i < t.entries.size(); ++i)
+                    {
+                        const auto& e = t.entries[i];
+                        for (size_t s = 0; s < e.subs.size(); ++s)
+                        {
+                            char head[128];
+                            std::snprintf(head, sizeof(head), "%u\t%u\t%s\t%zu\t%zu\t%08X\t%g\t%g\t", packageId, tableIndex,
+                                          t.name.c_str(), i, s, e.nameCRC, e.subs[s].startTime, e.subs[s].endTime);
+                            out << head << EscapeText(e.subs[s].text) << "\n";
+                            ++rows;
+                        }
+                    }
+                    ++tableIndex;
+                }
+            }
+        }
+        std::printf("%s: package %u, %u table(s), %zu rows -> %s\n", path.c_str(), packageId, tableIndex, rows, outPath.c_str());
+        return 0;
+    }
+
     int MakeStrings(int argc, char** argv)
     {
         if (argc < 4)
@@ -308,6 +370,7 @@ namespace
                      "pkztool [--le] <command> ...\n"
                      "  info <file>\n  tree <file> [maxDepth]\n  unpack <in.pkz> <out.pak>\n"
                      "  pack <in.pak> <out.pkz> [level]\n  roundtrip <file>\n  strings <file> [tableName]\n"
+                     "  export-strings <file> <out.tsv> [langMask]  append one language's tables as rows\n"
                      "  make-strings <out.pkz> <packageId> <packageName> <strings.txt> [--compress] [--lang MASK]\n"
                      "  textures <file>                       list the textures (size, format, tiling)\n"
                      "  texture <file> <name> <out.png|.bin>  export level 0 as PNG, or the raw descriptor + GPU bytes\n"
@@ -339,6 +402,8 @@ int main(int argc, char** argv)
         if (cmd == "pack" && rest >= 2) return Pack(argv[i], argv[i + 1], rest >= 3 ? std::atoi(argv[i + 2]) : Z_BEST_SPEED);
         if (cmd == "roundtrip" && rest >= 1) return RoundTrip(argv[i]);
         if (cmd == "strings" && rest >= 1) return Strings(argv[i], rest >= 2 ? argv[i + 1] : "");
+        if (cmd == "export-strings" && rest >= 2)
+            return ExportStrings(argv[i], argv[i + 1], rest >= 3 ? static_cast<uint32_t>(std::strtoul(argv[i + 2], nullptr, 0)) : 1u);
         if (cmd == "make-strings") return MakeStrings(rest, argv + i);
         if (cmd == "textures" && rest >= 1) return Textures(argv[i]);
         if (cmd == "texture" && rest >= 3) return TextureExport(argv[i], argv[i + 1], argv[i + 2]);
