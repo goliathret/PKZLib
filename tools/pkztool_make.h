@@ -54,27 +54,6 @@ namespace pkztool
         return out;
     }
 
-    inline char16_t FoldCyrillic(char16_t c)
-    {
-        static const char16_t latin[] = u"ABEKMHOPCTX";
-        static const char16_t upper[] = u"\u0410\u0412\u0415\u041A\u041C\u041D\u041E\u0420\u0421\u0422\u0425";
-        static const char16_t lowerLatin[] = u"aeopcyx";
-        static const char16_t lower[] = u"\u0430\u0435\u043E\u0440\u0441\u0443\u0445";
-        for (size_t i = 0; upper[i]; ++i)
-            if (c == upper[i])
-                return latin[i];
-        for (size_t i = 0; lower[i]; ++i)
-            if (c == lower[i])
-                return lowerLatin[i];
-        if (c >= 0x0410 && c <= 0x044F)
-            return static_cast<char16_t>(0xC0 + (c - 0x0410));
-        if (c == 0x0401)
-            return 0xA8;
-        if (c == 0x0451)
-            return 0xB8;
-        return c;
-    }
-
     inline std::string Unescape(const std::string& text)
     {
         std::string out;
@@ -91,7 +70,7 @@ namespace pkztool
         return out;
     }
 
-    inline RZStringTable LoadTranslation(const std::string& path, const std::string& tableName, bool foldCyrillic, uint32_t salt, uint32_t languageMask)
+    inline RZStringTable LoadTranslation(const std::string& path, const std::string& tableName, uint32_t salt, uint32_t languageMask)
     {
         RZStringTable table;
         table.name = tableName;
@@ -122,12 +101,8 @@ namespace pkztool
                 throw std::runtime_error("expected 9 tab-separated columns: " + line);
             const uint32_t crc = static_cast<uint32_t>(std::strtoul(cols[5].c_str(), nullptr, 16));
             const uint32_t sub = static_cast<uint32_t>(std::strtoul(cols[4].c_str(), nullptr, 10));
-            std::u16string text = RZStringTable::FromUtf8(Unescape(line.substr(from)));
-            if (foldCyrillic)
-                for (char16_t& c : text)
-                    c = FoldCyrillic(c);
             RZStringTable::SubString s;
-            s.text = text;
+            s.text = RZStringTable::FromUtf8(Unescape(line.substr(from)));
             s.startTime = static_cast<float>(std::atof(cols[6].c_str()));
             s.endTime = static_cast<float>(std::atof(cols[7].c_str()));
             if (!haveLast || crc != lastCrc || sub == 0)
@@ -356,22 +331,19 @@ namespace pkztool
             }
             else if (t[0] == "translation" && t.size() >= 2)
             {
-                bool fold = false;
                 uint32_t salt = 0;
                 uint32_t languageMask = 0x1;
                 std::string table = "Translation";
                 for (size_t i = 2; i < t.size(); ++i)
                 {
-                    if (t[i] == "fold=cyrillic")
-                        fold = true;
-                    else if (t[i].rfind("salt=", 0) == 0)
+                    if (t[i].rfind("salt=", 0) == 0)
                         salt = static_cast<uint32_t>(std::strtoul(t[i].c_str() + 5, nullptr, 0));
                     else if (t[i].rfind("lang=", 0) == 0)
                         languageMask = static_cast<uint32_t>(std::strtoul(t[i].c_str() + 5, nullptr, 0));
                     else
                         table = t[i];
                 }
-                b.stringTables.push_back(LoadTranslation(Resolve(t[1], dir, paksDir), table, fold, salt, languageMask));
+                b.stringTables.push_back(LoadTranslation(Resolve(t[1], dir, paksDir), table, salt, languageMask));
             }
             else if (t[0] == "texture" && t.size() >= 5 && t[2] == "from")
                 b.textures.push_back(CopyTexture(Resolve(t[3], dir, paksDir), t[4], t[1], littleEndian));
