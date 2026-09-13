@@ -203,6 +203,13 @@ class BUCompress
 public:
     using Options = BUCompressOptions;
 
+    static void FillWithEmptyBlocks(std::vector<uint8_t>& sector, size_t from)
+    {
+        static const uint8_t kEmptyStoredBlock[5] = { 0x00, 0x00, 0x00, 0xFF, 0xFF };
+        for (size_t i = from; i < sector.size(); ++i)
+            sector[i] = kEmptyStoredBlock[(i - from) % 5];
+    }
+
     static std::vector<uint8_t> Compress(const uint8_t* data, size_t size, const Options& opt = Options())
     {
         if (opt.sectorSize < 1024 || opt.feedSize == 0 || opt.feedSize >= opt.sectorSize / 2 ||
@@ -247,9 +254,12 @@ public:
                 }
                 committed += piece;
             }
+            const size_t written = sector.size() - strm.avail_out;
             deflateEnd(&strm);
             if (committed == pos)
                 throw std::runtime_error("BUCompress: a single piece does not fit a sector");
+            if (committed < size)
+                FillWithEmptyBlocks(sector, written);
             sectors.push_back(std::move(sector));
             table.push_back(committed);
             pos = committed;
