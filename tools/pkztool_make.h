@@ -33,14 +33,33 @@ namespace pkztool
         return f.good();
     }
 
+    inline std::string SiblingSpelling(const std::string& p)
+    {
+        const size_t dot = p.rfind('.');
+        if (dot == std::string::npos)
+            return std::string();
+        const std::string ext = p.substr(dot);
+        if (ext == ".pak" || ext == ".PAK")
+            return p.substr(0, dot) + ".pkz";
+        if (ext == ".pkz" || ext == ".PKZ")
+            return p.substr(0, dot) + ".pak";
+        return std::string();
+    }
+
     inline std::string Resolve(const std::string& p, const std::string& manifestDir, const std::string& paksDir)
     {
         if (IsAbsolute(p))
             return p;
-        if (FileExists(manifestDir + p))
-            return manifestDir + p;
-        if (!paksDir.empty() && FileExists(paksDir + p))
-            return paksDir + p;
+        const std::string sibling = SiblingSpelling(p);
+        for (const std::string& name : { p, sibling })
+        {
+            if (name.empty())
+                continue;
+            if (FileExists(manifestDir + name))
+                return manifestDir + name;
+            if (!paksDir.empty() && FileExists(paksDir + name))
+                return paksDir + name;
+        }
         return manifestDir + p;
     }
 
