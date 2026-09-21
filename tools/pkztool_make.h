@@ -372,7 +372,20 @@ namespace pkztool
                 if (!f)
                     throw std::runtime_error(where + "cannot open " + t[3]);
                 const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-                b.textures.push_back(RZTexture::FromDds(t[1], bytes, t.size() >= 5 && t[4] == "nomips"));
+                bool baseLevelOnly = false;
+                RZTexture::DdsColor color = RZTexture::DdsColor::Gamma;
+                for (size_t i = 4; i < t.size(); ++i)
+                {
+                    if (t[i] == "nomips")
+                        baseLevelOnly = true;
+                    else if (t[i] == "linear")
+                        color = RZTexture::DdsColor::Linear;
+                    else if (t[i] == "normal")
+                        color = RZTexture::DdsColor::NormalMap;
+                    else
+                        throw std::runtime_error(where + "unknown texture option " + t[i]);
+                }
+                b.textures.push_back(RZTexture::FromDds(t[1], bytes, baseLevelOnly, color));
             }
             else if (t[0] == "texture" && t.size() >= 6 && t[2] == "atlas")
             {

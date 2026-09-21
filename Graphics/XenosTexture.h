@@ -52,6 +52,7 @@ namespace XenosTexture
         static constexpr uint32_t kDXT5Tiled = 0x1A207F54;
         static constexpr uint32_t kDXT1Tiled = 0x1A207F52;
         static constexpr uint32_t kDXT1TiledLinearColor = 0x1A200152;
+        static constexpr uint32_t kDXT5TiledNormalMap = 0x1A215554;
         static constexpr uint32_t kA8R8G8B8Tiled = 0x18287F86;
 
         bool IsBlockCompressed() const

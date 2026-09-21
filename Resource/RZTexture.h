@@ -19,6 +19,7 @@ public:
     struct Descriptor
     {
         uint32_t dimension = 1;
+        float normalScale = 1.0f;
         uint32_t width = 0, height = 0;
         uint32_t mipLevels = 1;
         uint32_t depth = 0;
@@ -30,6 +31,7 @@ public:
         uint32_t minLevelSize = 0;
 
         static constexpr size_t kSize = 60;
+        static constexpr uint32_t kNormalMap = 5;
 
         static Descriptor Parse(const CMChunk& textureData)
         {
@@ -40,6 +42,12 @@ public:
             const uint32_t f0 = textureData.Read<uint32_t>(off);
             (void)f0;
             d.dimension = textureData.Read<uint32_t>(off);
+            if (d.dimension == kNormalMap)
+            {
+                if (textureData.data.size() < kSize + 4)
+                    throw std::runtime_error("RZTexture: short normal-map Texture_Data chunk");
+                d.normalScale = textureData.Read<float>(off);
+            }
             d.width = textureData.Read<uint32_t>(off);
             d.height = textureData.Read<uint32_t>(off);
             d.mipLevels = textureData.Read<uint32_t>(off);
@@ -60,6 +68,8 @@ public:
         {
             textureData.Append<uint32_t>(0);
             textureData.Append<uint32_t>(dimension);
+            if (dimension == kNormalMap)
+                textureData.Append<float>(normalScale);
             textureData.Append<uint32_t>(width);
             textureData.Append<uint32_t>(height);
             textureData.Append<uint32_t>(mipLevels);
@@ -77,7 +87,9 @@ public:
 
         XenosTexture::D3DFormat Format() const { return XenosTexture::D3DFormat::Decode(d3dFormat); }
 
-        bool Is2D() const { return dimension <= 1 && depth == 0; }
+        bool Is2D() const { return (dimension <= 1 || dimension == kNormalMap) && depth == 0; }
+
+        size_t Size() const { return kSize + (dimension == kNormalMap ? 4 : 0); }
     };
 
     std::string name;
@@ -99,7 +111,7 @@ public:
         t.nameCRC = header.GetCRC();
         t.languageMask = header.GetLanguageMask();
         t.desc = Descriptor::Parse(*data);
-        t.gpuData.assign(data->data.begin() + Descriptor::kSize, data->data.end());
+        t.gpuData.assign(data->data.begin() + static_cast<std::ptrdiff_t>(t.desc.Size()), data->data.end());
         return t;
     }
 
@@ -163,7 +175,15 @@ public:
         return t;
     }
 
-    static RZTexture FromDds(const std::string& name, const std::vector<uint8_t>& file, bool baseLevelOnly = false)
+    enum class DdsColor
+    {
+        Gamma,
+        Linear,
+        NormalMap
+    };
+
+    static RZTexture FromDds(const std::string& name, const std::vector<uint8_t>& file, bool baseLevelOnly = false,
+                             DdsColor color = DdsColor::Gamma)
     {
         BUDds::Image img = BUDds::Decode(file);
         if (baseLevelOnly && img.levels.size() > 1)
@@ -173,17 +193,25 @@ public:
             format = XenosTexture::kFormat_DXT1;
         else if (img.fourCC == BUDds::kDXT3)
             format = XenosTexture::kFormat_DXT2_3;
+        if (color == DdsColor::NormalMap && format != XenosTexture::kFormat_DXT4_5)
+            throw std::runtime_error("RZTexture::FromDds: a normal map is DXT5 (" + name + ")");
 
         RZTexture t;
         t.name = name;
         t.nameCRC = BUCRC().Generate(name);
-        t.desc.dimension = 1;
+        t.desc.dimension = color == DdsColor::NormalMap ? Descriptor::kNormalMap : 1;
         t.desc.width = img.width;
         t.desc.height = img.height;
         t.desc.mipLevels = static_cast<uint32_t>(img.levels.size());
-        t.desc.d3dFormat = (XenosTexture::D3DFormat::kDXT5Tiled & ~0x3Fu) | format;
+        const uint32_t base = color == DdsColor::NormalMap ? XenosTexture::D3DFormat::kDXT5TiledNormalMap
+                              : color == DdsColor::Linear  ? XenosTexture::D3DFormat::kDXT1TiledLinearColor
+                                                           : XenosTexture::D3DFormat::kDXT5Tiled;
+        t.desc.d3dFormat = (base & ~0x3Fu) | format;
         const XenosTexture::D3DFormat f = t.desc.Format();
 
+        const uint32_t mips = t.desc.mipLevels;
+        const uint32_t tailLevels = mips > 2 ? mips - 2 : 1;
+        const uint32_t tailFirst = mips - tailLevels;
         for (size_t i = 0; i < img.levels.size(); ++i)
         {
             const BUDds::Level& level = img.levels[i];
@@ -194,13 +222,14 @@ public:
                                          " is smaller than one tile; the console packs those into a mip tail this "
                                          "packer does not write");
             const std::vector<uint8_t> tiled = XenosTexture::Tile(level.data.data(), level.width, level.height, f);
-            if (i == 1)
+            if (i == tailFirst && i > 0)
                 t.desc.mipChainOffset = static_cast<uint32_t>(t.gpuData.size());
             t.gpuData.insert(t.gpuData.end(), tiled.begin(), tiled.end());
         }
 
-        const BUDds::Level& last = img.levels.back();
-        t.desc.minLevelSize = (last.width << 16) | last.height;
+        const BUDds::Level& tailTop = img.levels[tailFirst];
+        t.desc.f13 = tailLevels;
+        t.desc.minLevelSize = (tailTop.width << 16) | tailTop.height;
         return t;
     }
 
