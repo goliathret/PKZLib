@@ -4,6 +4,7 @@
 #include <iostream>
 
 #include "CMChunkTypes.h"
+#include "../Data/Field.h"
 #include <stdexcept>
 
 class CMChunk
@@ -19,6 +20,8 @@ public:
     uint64_t offset = 0;
 
     std::vector<uint8_t> data; // Data of the chunk (Only applied if child chunk.)
+
+    std::vector<Field> Fields;
 
     std::vector<CMChunk> children;
 
@@ -53,10 +56,7 @@ public:
         return FindInChildren(static_cast<uint32_t>(searchType));
     }
 
-    std::vector<CMChunk> GetChildren() const
-    {
-        return children;
-    }
+    const std::vector<CMChunk>& GetChildren() const { return children; }
 
     CMChunkTypes GetIDToEnum() const
     {
@@ -241,6 +241,8 @@ public:
         return chunk;
     }
 
+    void Parse() { size_t offset = 0; for (const Field& field : Fields) { ReadField(field, offset); } }
+
     template<typename T>
     T Read(size_t& offset)
     {
@@ -267,4 +269,100 @@ public:
 
         return value;
     }
+
+    void ReadField(const Field& field, size_t& offset)
+    {
+        void* dst = reinterpret_cast<char*>(this) + field.objectOffset;
+
+        switch (field.type)
+        {
+        case FieldType::UInt8:
+            *reinterpret_cast<uint8_t*>(dst) = Read<uint8_t>(offset);
+            break;
+
+        case FieldType::UInt16:
+            *reinterpret_cast<uint16_t*>(dst) = Read<uint16_t>(offset);
+            break;
+
+        case FieldType::UInt32:
+            *reinterpret_cast<uint32_t*>(dst) = Read<uint32_t>(offset);
+            break;
+
+        case FieldType::UInt64:
+            *reinterpret_cast<uint64_t*>(dst) = Read<uint64_t>(offset);
+            break;
+
+        case FieldType::Int8:
+            *reinterpret_cast<int8_t*>(dst) = Read<int8_t>(offset);
+            break;
+
+        case FieldType::Int16:
+            *reinterpret_cast<int16_t*>(dst) = Read<int16_t>(offset);
+            break;
+
+        case FieldType::Int32:
+            *reinterpret_cast<int32_t*>(dst) = Read<int32_t>(offset);
+            break;
+
+        case FieldType::Int64:
+            *reinterpret_cast<int64_t*>(dst) = Read<int64_t>(offset);
+            break;
+
+        case FieldType::Float:
+            *reinterpret_cast<float*>(dst) = Read<float>(offset);
+            break;
+
+        case FieldType::Double:
+            *reinterpret_cast<double*>(dst) = Read<double>(offset);
+            break;
+
+        case FieldType::CharArray:
+            std::memcpy(dst, data.data() + offset, field.fileSize);
+            offset += field.fileSize;
+            break;
+        }
+    }
+
+    const Field* GetField(const std::string& name, VersionFlags version) const
+    {
+        for (const Field& field : Fields)
+        {
+            if (name == field.name && HasVersion(field.versions, version))
+            {
+                return &field;
+            }
+        }
+
+        return nullptr;
+    }
+    template<typename T>
+    T& GetFieldValue(const Field& field)
+    {
+        return *reinterpret_cast<T*>(
+            reinterpret_cast<char*>(this) + field.objectOffset);
+    }
+
+    template<typename T>
+    const T& GetFieldValue(const Field& field) const
+    {
+        return *reinterpret_cast<const T*>(
+            reinterpret_cast<const char*>(this) + field.objectOffset);
+    }
+
+    template<typename T>
+    T GetFieldValue(const char* name, VersionFlags version)
+    {
+        const Field* field = GetField(name, version);
+
+        if (!field)
+            return T{};
+
+        return GetFieldValue<T>(*field);
+    }
+protected:
+    void SetFields(std::initializer_list<Field> fields)
+    {
+        Fields.assign(fields.begin(), fields.end());
+    }
+    size_t dataOffset = 0;
 };

@@ -4,24 +4,14 @@
 #include <vector>
 
 #include "../Package/CMChunk.h"
+#include "../Data/Field.h"
 
-class RZGeomPrim : public CMChunk
+struct RZGeomPrimLayout
 {
-public:
-    enum VertexFormatFlags : uint32_t
-    {
-        VF_HasColor = 0x0002,
-        VF_UVCountMask = 0x00E0,
-        VF_BlendMask        = 0x0700, // Bits 8-10: number/type of bone influences
-        VF_HardwareSkinning = 0x0800, // Hardware skinning enabled
-        VF_HasNormals       = 0x1000, // Packed normal present
-    };
-
     uint32_t uiMaterialCount;
-    // uint8_t pui8MaterialIdxList;
     uint32_t pVertexBuffer;
     uint32_t uiVertexStride;
-    int32_t iVertexFormat;
+    int32_t  iVertexFormat;
     uint32_t uiVertexCount;
     uint32_t pDisplayList;
     uint32_t uiDisplayListSize;
@@ -31,115 +21,134 @@ public:
     uint32_t psBMeshData;
     uint32_t psBMeshDisplayList;
     uint32_t uiConstantDiffuse;
+};
+
+class RZGeomPrim : public CMChunk
+{
+public:
+    enum VertexFormatFlags : uint32_t
+    {
+        VF_HasColor          = 0x0002,
+        VF_UVCountMask       = 0x00E0,
+        VF_BlendMask         = 0x0700,
+        VF_HardwareSkinning  = 0x0800,
+        VF_HasNormals        = 0x1000,
+    };
+
+    RZGeomPrimLayout layout{};
     std::vector<uint32_t> uiBonePalette;
 
     RZGeomPrim(const CMChunk& chunk)
         : CMChunk(chunk)
     {
+        SetFields({
+            { "MaterialCount",    FieldType::UInt32, offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, uiMaterialCount),   4, VersionFlags::Both },
+            { "VertexBuffer",     FieldType::UInt32, offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, pVertexBuffer),      4, VersionFlags::Both },
+            { "VertexStride",     FieldType::UInt32, offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, uiVertexStride),     4, VersionFlags::Both },
+            { "VertexFormat",     FieldType::Int32,  offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, iVertexFormat),      4, VersionFlags::Both },
+            { "VertexCount",      FieldType::UInt32, offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, uiVertexCount),      4, VersionFlags::Both },
+            { "DisplayList",      FieldType::UInt32, offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, pDisplayList),       4, VersionFlags::Both },
+            { "DisplayListSize",  FieldType::UInt32, offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, uiDisplayListSize),  4, VersionFlags::Both },
+            { "Flags",            FieldType::UInt32, offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, uiFlags),            4, VersionFlags::Both },
+            { "BonePaletteSize",  FieldType::UInt32, offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, uiBonePaletteSize),  4, VersionFlags::Both },
+            { "MorphTargets",     FieldType::UInt32, offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, ppMorphTargets),     4, VersionFlags::Both },
+            { "BMeshData",        FieldType::UInt32, offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, psBMeshData),        4, VersionFlags::Both },
+            { "BMeshDisplayList", FieldType::UInt32, offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, psBMeshDisplayList),  4, VersionFlags::Both },
+            { "ConstantDiffuse",  FieldType::UInt32, offsetof(RZGeomPrim, layout) + offsetof(RZGeomPrimLayout, uiConstantDiffuse),  4, VersionFlags::Both },
+            });
+
         Parse();
+
+        if (GetBonePaletteSize() != 0)
+        {
+            uiBonePalette.reserve(GetBonePaletteSize());
+
+            for (uint32_t i = 0; i < GetBonePaletteSize(); i++)
+            {
+                uiBonePalette.push_back(Read<uint32_t>(dataOffset));
+            }
+        }
+    }
+
+    uint32_t GetBonePaletteSize() const
+    {
+        const Field* field = GetField("BonePaletteSize", VersionFlags::Both);
+        return field ? GetFieldValue<uint32_t>(*field) : 0;
+    }
+
+    uint32_t GetMaterialCount() const
+    {
+        const Field* field = GetField("MaterialCount", VersionFlags::Both);
+        return field ? GetFieldValue<uint32_t>(*field) : 0;
+    }
+
+    uint32_t GetVertexCount() const
+    {
+        const Field* field = GetField("VertexCount", VersionFlags::Both);
+        return field ? GetFieldValue<uint32_t>(*field) : 0;
+    }
+
+    uint32_t GetDisplayListSize() const
+    {
+        const Field* field = GetField("DisplayListSize", VersionFlags::Both);
+        return field ? GetFieldValue<uint32_t>(*field) : 0;
+    }
+
+    uint32_t GetVertexStride() const
+    {
+        const Field* field = GetField("VertexStride", VersionFlags::Both);
+        return field ? GetFieldValue<uint32_t>(*field) : 0;
+    }
+
+    uint32_t GetFlags() const
+    {
+        const Field* field = GetField("Flags", VersionFlags::Both);
+        return field ? GetFieldValue<uint32_t>(*field) : 0;
+    }
+
+    uint32_t GetConstantDiffuse() const
+    {
+        const Field* field = GetField("ConstantDiffuse", VersionFlags::Both);
+        return field ? GetFieldValue<uint32_t>(*field) : 0;
+    }
+
+    int32_t GetVertexFormat() const
+    {
+        const Field* field = GetField("VertexFormat", VersionFlags::Both);
+        return field ? GetFieldValue<int32_t>(*field) : 0;
     }
 
     bool HasNormals() const
     {
-        return (static_cast<uint32_t>(iVertexFormat) & VF_HasNormals) != 0;
+        return (static_cast<uint32_t>(GetVertexFormat()) & VF_HasNormals) != 0;
     }
 
     bool UsesHardwareSkinning() const
     {
-        return (static_cast<uint32_t>(iVertexFormat) & VF_HardwareSkinning) != 0;
+        return (static_cast<uint32_t>(GetVertexFormat()) & VF_HardwareSkinning) != 0;
     }
 
     uint32_t GetBlendMode() const
     {
-        return (static_cast<uint32_t>(iVertexFormat) & VF_BlendMask) >> 8;
+        return (static_cast<uint32_t>(GetVertexFormat()) & VF_BlendMask) >> 8;
     }
 
     bool RequiresSoftwareSkinning() const
     {
         return !UsesHardwareSkinning() &&
             (GetBlendMode() != 0) &&
-            (uiBonePaletteSize > 1);
-    }
-
-    uint32_t GetBonePaletteSize() const
-    {
-        return uiBonePaletteSize;
-    }
-
-    uint32_t GetMaterialCount() const
-    {
-        return uiMaterialCount;
-    }
-
-    uint32_t GetVertexCount() const
-    {
-        return uiVertexCount;
-    }
-
-    uint32_t GetDisplayListSize() const
-    {
-        return uiDisplayListSize;
-    }
-
-    uint32_t GetVertexStride() const
-    {
-        return uiVertexStride;
-    }
-
-    uint32_t GetFlags() const
-    {
-        return uiFlags;
-    }
-
-    uint32_t GetConstantDiffuse() const
-    {
-        return uiConstantDiffuse;
-    }
-
-    int32_t GetVertexFormat() const
-    {
-        return iVertexFormat;
+            (GetBonePaletteSize() > 1);
     }
 
 private:
+
     void Parse()
     {
-        size_t offset = 0;
+        dataOffset = 0;
 
-        uiMaterialCount = Read<uint32_t>(offset);
-
-        pVertexBuffer = Read<uint32_t>(offset);
-
-        uiVertexStride = Read<uint32_t>(offset);
-
-        iVertexFormat = Read<int32_t>(offset);
-
-        uiVertexCount = Read<uint32_t>(offset);
-
-        pDisplayList = Read<uint32_t>(offset);
-
-        uiDisplayListSize = Read<uint32_t>(offset);
-
-        uiFlags = Read<uint32_t>(offset);
-
-        uiBonePaletteSize = Read<uint32_t>(offset);
-
-        ppMorphTargets = Read<uint32_t>(offset);
-
-        psBMeshData = Read<uint32_t>(offset);
-
-        psBMeshDisplayList = Read<uint32_t>(offset);
-
-        uiConstantDiffuse = Read<uint32_t>(offset);
-
-        if (uiBonePaletteSize != 0)
+        for (const Field& field : Fields)
         {
-            uiBonePalette.reserve(uiBonePaletteSize);
-
-            for (uint32_t i = 0; i < uiBonePaletteSize; i++)
-            {
-                uiBonePalette.push_back(Read<uint32_t>(offset));
-            }
+            ReadField(field, dataOffset);
         }
     }
 };
