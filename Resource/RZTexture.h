@@ -175,15 +175,7 @@ public:
         return t;
     }
 
-    enum class DdsColor
-    {
-        Gamma,
-        Linear,
-        NormalMap
-    };
-
-    static RZTexture FromDds(const std::string& name, const std::vector<uint8_t>& file, bool baseLevelOnly = false,
-                             DdsColor color = DdsColor::Gamma)
+    static RZTexture FromDds(const std::string& name, const std::vector<uint8_t>& file, bool baseLevelOnly = false)
     {
         BUDds::Image img = BUDds::Decode(file);
         if (baseLevelOnly && img.levels.size() > 1)
@@ -209,9 +201,6 @@ public:
         t.desc.d3dFormat = (base & ~0x3Fu) | format;
         const XenosTexture::D3DFormat f = t.desc.Format();
 
-        const uint32_t mips = t.desc.mipLevels;
-        const uint32_t tailLevels = mips > 2 ? mips - 2 : 1;
-        const uint32_t tailFirst = mips - tailLevels;
         for (size_t i = 0; i < img.levels.size(); ++i)
         {
             const BUDds::Level& level = img.levels[i];
@@ -222,7 +211,7 @@ public:
                                          " is smaller than one tile; the console packs those into a mip tail this "
                                          "packer does not write");
             const std::vector<uint8_t> tiled = XenosTexture::Tile(level.data.data(), level.width, level.height, f);
-            if (i == tailFirst && i > 0)
+            if (i == 1)
                 t.desc.mipChainOffset = static_cast<uint32_t>(t.gpuData.size());
             t.gpuData.insert(t.gpuData.end(), tiled.begin(), tiled.end());
         }
