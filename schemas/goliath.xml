@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Game-independent Goliath package fields.  Game schemas may add layouts or
+     replace names without changing the binary parser. -->
+<pkz-fields name="Goliath core">
+  <enum name="resource-type">
+    <value key="0" name="Invalid"/>
+    <value key="1" name="LogicCode"/>
+    <value key="2" name="Hierarchy"/>
+    <value key="3" name="Geometry"/>
+    <value key="4" name="Texture"/>
+    <value key="5" name="HAnim"/>
+    <value key="6" name="BinaryData"/>
+    <value key="7" name="Font"/>
+    <value key="8" name="ParticleDesc"/>
+    <value key="11" name="CutScene"/>
+    <value key="14" name="AudioSample"/>
+    <value key="17" name="MotionTrail"/>
+    <value key="21" name="ParamBlock"/>
+    <value key="23" name="AnimCue"/>
+    <value key="24" name="AnimTree"/>
+    <value key="25" name="TextStyle"/>
+    <value key="27" name="Curve"/>
+    <value key="28" name="ResourcesList"/>
+  </enum>
+
+  <chunk id="0x1" name="Root"/>
+
+  <chunk id="0x11" name="Gen_LevelHeader">
+    <layout version="3" size="264">
+      <field name="packageId" offset="0x00" type="u32" display="hex"/>
+      <field name="headerCount" offset="0x04" type="u16"/>
+      <field name="reserved" offset="0x06" type="u16" display="hex"/>
+      <field name="name" offset="0x08" type="ascii" length="128"/>
+      <field name="secondaryName" offset="0x88" type="ascii" length="128"/>
+    </layout>
+  </chunk>
+
+  <chunk id="0x19" name="Gen_Languages">
+    <layout version="1">
+      <record name="languages" offset="0" stride="4" count="remaining">
+        <field name="languageId" offset="0" type="u32"/>
+      </record>
+    </layout>
+  </chunk>
+
+  <chunk id="0x1A" name="Gen_ExportContext">
+    <layout version="2">
+      <field name="values" offset="0" type="cstring" count="3"/>
+    </layout>
+  </chunk>
+
+  <chunk id="0x25" name="Gen_LODDistances">
+    <layout version="1" size="16">
+      <field name="distances" offset="0" type="f32" count="4"/>
+    </layout>
+  </chunk>
+
+  <chunk id="0x138E" name="GenSub_ResourceHeader">
+    <layout version="5" size="88">
+      <field name="nameCrc" offset="0x00" type="u32" display="hex"/>
+      <field name="resourceType" offset="0x04" type="u32" enum="resource-type"/>
+      <field name="languageMask" offset="0x08" type="u32" display="hex"/>
+      <field name="dataOffset" offset="0x0C" type="u32" display="hex"/>
+      <field name="qualityLevel" offset="0x10" type="u32"/>
+      <field name="postLoadCrc" offset="0x14" type="u32" display="hex"/>
+      <field name="name" offset="0x18" type="ascii" length="64"/>
+    </layout>
+    <layout version="5" size="92">
+      <field name="nameCrc" offset="0x00" type="u32" display="hex"/>
+      <field name="resourceType" offset="0x04" type="u32" enum="resource-type"/>
+      <field name="languageMask" offset="0x08" type="u32" display="hex"/>
+      <field name="qualityLevel" offset="0x0C" type="u32"/>
+      <field name="dataOffset" offset="0x10" type="u64" display="hex"/>
+      <field name="postLoadCrc" offset="0x18" type="u32" display="hex"/>
+      <field name="name" offset="0x1C" type="ascii" length="64"/>
+    </layout>
+  </chunk>
+
+  <chunk id="0x139A" name="GenSub_Info">
+    <layout version="1" size="4">
+      <field name="count" offset="0" type="u32"/>
+    </layout>
+  </chunk>
+</pkz-fields>
