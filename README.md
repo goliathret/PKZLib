@@ -19,4 +19,23 @@ cmake --build out
 out/pkzlib_selftest
 ```
 
-Consumers link the `pkzlib` INTERFACE target
+Consumers link the `pkzlib` INTERFACE target.
+
+## Schema-driven field dumps (Heavy beta)
+
+`tools/pkzfields.py` walks a raw `.pak` chunk tree and decodes leaf payloads
+with composable XML schemas. Engine-wide layouts live in
+`schemas/goliath.xml`; title-specific layouts stay in separate files instead
+of entering the C++ parser.
+
+```sh
+# Decode common package/resource fields.
+python tools/pkzfields.py game.pak --chunk GenSub_ResourceHeader
+
+# Add Spider-Man: Edge of Time layouts and inspect its world draw table.
+python tools/pkzfields.py level.pak --game eot \
+  --chunk RenderOctree_Prims --max-records 8
+
+# Machine-readable output for corpus analysis.
+python tools/pkzfields.py game.pak --game eot --json > fields.json
+```

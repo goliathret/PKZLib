@@ -38,4 +38,10 @@ if(PKZLIB_BUILD_TESTS)
     add_executable(pkzlib_selftest tests/selftest.cpp)
     target_link_libraries(pkzlib_selftest PRIVATE pkzlib)
     add_test(NAME pkzlib_selftest COMMAND pkzlib_selftest)
+
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME pkzfields_selftest
+                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pkzfields.py")
+    endif()
 endif()
