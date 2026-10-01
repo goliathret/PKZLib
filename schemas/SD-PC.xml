@@ -1641,7 +1641,7 @@
       <field offset="8" name="unknownFlag" type="u32"/>
       <field offset="12" name="languageMask" type="u32" flags="LanguageMask"/>
       <field offset="16" name="payloadOffset" type="u32"/>
-      <field offset="20" name="level" type="u32"/>
+      <field offset="20" name="postLoadDataCRC" type="u32"/>
       <field offset="24" name="name" type="char[64]"/>
     </chunk>
     <chunk id="0x1391" name="GenSub_ParamBlock" version="2">
