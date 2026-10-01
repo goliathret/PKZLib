@@ -17,10 +17,12 @@
 #include "../Resource/ResourceHeader.h"
 #include "pkztool_dump.h"
 #include "pkztool_make.h"
+#include "../Package/PKFieldSchema.h"
 
 namespace
 {
     bool gLittleEndian = false;
+    std::string gGameSchema;  // e.g. "SD-PC" -> schemas/SD-PC.xml
 
     std::vector<uint8_t> ReadFile(const std::string& path)
     {
@@ -364,10 +366,37 @@ namespace
         return 1;
     }
 
+
+    int Fields(const std::string& path, int maxDepth, const std::string& filter)
+    {
+        if (gGameSchema.empty())
+        {
+            std::fprintf(stderr, "fields requires -g <game> (e.g. -g SD-PC)\n");
+            return 2;
+        }
+        const std::string schemaPath = pkfields::ResolveGameSchema(gGameSchema);
+        pkfields::SchemaSet schema;
+        std::string err;
+        if (!pkfields::LoadSchemaFile(schemaPath, schema, err))
+        {
+            std::fprintf(stderr, "pkztool: %s\n", err.c_str());
+            return 1;
+        }
+        std::printf("schema: %s (%zu chunk types) from %s\n",
+                    schema.name.c_str(), schema.chunks.size(), schemaPath.c_str());
+
+        PKPackage pkg;
+        pkg.isLittleEndian = gLittleEndian || (schema.endian != "big");
+        pkg.ReadFromFile(path);
+        for (const CMChunk& root : pkg.rootChunks)
+            pkfields::DumpTree(root, schema, 0, maxDepth, filter);
+        return 0;
+    }
+
     int Usage()
     {
         std::fprintf(stderr,
-                     "pkztool [--le] <command> ...\n"
+                     "pkztool [--le] [-g|--game NAME] <command> ...\n"
                      "  info <file>\n  tree <file> [maxDepth]\n  unpack <in.pkz> <out.pak>\n"
                      "  pack <in.pak> <out.pkz> [level]\n  roundtrip <file>\n  strings <file> [tableName]\n"
                      "  export-strings <file> <out.tsv> [langMask]  append one language's tables as rows\n"
@@ -377,7 +406,12 @@ namespace
                      "  font <file> [name]                    dump the bitmap fonts' glyph tables\n"
                      "  font-atlas <file> <font> <out.png>    the font's atlas with every glyph box drawn\n"
                      "  hud <file> [name]                     dump the HUD window definitions\n"
-                     "  make <manifest> <out.pkz> [--paks <dir>]  author a package (see tools/pkztool_make.h)\n");
+                     "  make <manifest> <out.pkz> [--paks <dir>]  author a package (see tools/pkztool_make.h)\n"
+                     "  fields <file> [maxDepth] [filter]       dump fields using -g schema (e.g. -g SD-PC)\n"
+                     "\n"
+                     "Global flags (before command):\n"
+                     "  --le                 little-endian headers/payloads (PC)\n"
+                     "  -g|--game NAME       load schemas/NAME.xml field definitions\n");
         return 2;
     }
 }
@@ -387,10 +421,20 @@ int main(int argc, char** argv)
     try
     {
         int i = 1;
-        if (i < argc && !std::strcmp(argv[i], "--le"))
+        while (i < argc)
         {
-            gLittleEndian = true;
-            ++i;
+            if (!std::strcmp(argv[i], "--le"))
+            {
+                gLittleEndian = true;
+                ++i;
+            }
+            else if ((!std::strcmp(argv[i], "-g") || !std::strcmp(argv[i], "--game")) && i + 1 < argc)
+            {
+                gGameSchema = argv[i + 1];
+                i += 2;
+            }
+            else
+                break;
         }
         if (i >= argc)
             return Usage();
@@ -411,6 +455,12 @@ int main(int argc, char** argv)
         if (cmd == "font-atlas" && rest >= 3) return pkztool::FontAtlas(argv[i], argv[i + 1], argv[i + 2], gLittleEndian);
         if (cmd == "hud" && rest >= 1) return pkztool::Hud(argv[i], rest >= 2 ? argv[i + 1] : "", gLittleEndian);
         if (cmd == "styles" && rest >= 1) return pkztool::Styles(argv[i], gLittleEndian);
+        if (cmd == "fields" && rest >= 1)
+        {
+            const int depth = rest >= 2 ? std::atoi(argv[i + 1]) : 6;
+            const std::string filter = rest >= 3 ? argv[i + 2] : "";
+            return Fields(argv[i], depth, filter);
+        }
         if (cmd == "make" && rest >= 2)
         {
             std::string paks;
