@@ -213,7 +213,7 @@ public:
     }
 
     static RZTexture FromDds(const std::string& name, const std::vector<uint8_t>& file, bool baseLevelOnly = false,
-                             DdsColor color = DdsColor::Gamma)
+                             DdsColor color = DdsColor::Gamma, float scale = 1.0f)
     {
         BUDds::Image img = BUDds::Decode(file);
         if (baseLevelOnly && img.levels.size() > 1)
@@ -230,6 +230,7 @@ public:
         t.name = name;
         t.nameCRC = BUCRC().Generate(name);
         t.desc.dimension = color == DdsColor::NormalMap ? Descriptor::kNormalMap : 1;
+        t.desc.normalScale = scale;
         t.desc.width = img.width;
         t.desc.height = img.height;
         t.desc.mipLevels = static_cast<uint32_t>(img.levels.size());

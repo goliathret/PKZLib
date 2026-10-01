@@ -374,6 +374,7 @@ namespace pkztool
                 const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
                 bool baseLevelOnly = false;
                 RZTexture::DdsColor color = RZTexture::DdsColor::Gamma;
+                float scale = 1.0f;
                 for (size_t i = 4; i < t.size(); ++i)
                 {
                     if (t[i] == "nomips")
@@ -382,10 +383,12 @@ namespace pkztool
                         color = RZTexture::DdsColor::Linear;
                     else if (t[i] == "normal")
                         color = RZTexture::DdsColor::NormalMap;
+                    else if (t[i].rfind("bump=", 0) == 0)
+                        scale = std::strtof(t[i].c_str() + 5, nullptr);
                     else
                         throw std::runtime_error(where + "unknown texture option " + t[i]);
                 }
-                b.textures.push_back(RZTexture::FromDds(t[1], bytes, baseLevelOnly, color));
+                b.textures.push_back(RZTexture::FromDds(t[1], bytes, baseLevelOnly, color, scale));
             }
             else if (t[0] == "texture" && t.size() >= 6 && t[2] == "atlas")
             {
