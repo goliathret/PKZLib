@@ -117,6 +117,35 @@ namespace
             }
             Check(lookupOk, "lookup names the sector holding each uncompressed sector's end");
         }
+
+        {
+            const std::vector<uint8_t> flat(0x50000, 0x11);
+            const std::vector<uint8_t> packed = BUCompress::Compress(flat);
+            BUDecompress d;
+            d.ParseHeader(packed.data(), packed.size());
+            Check(d.GetNbSectors() == 2 && d.SectorEnd(0) == 0x40000, "a chunk that fits takes a whole sector");
+            Check(packed[d.mCompHeader.uiTotalHeaderSize + 0x8000 - 1] == BUCompress::kChunkPadding,
+                  "a chunk that fits is padded with 0xDA");
+            Check(packed.back() == 0, "the last sector is padded with zeros");
+            Check(BUDecompress::Decompress(packed) == flat, "padded sectors round-trip");
+        }
+        {
+            std::vector<uint8_t> noise(200000);
+            uint32_t x = 1;
+            for (uint8_t& b : noise)
+            {
+                x = x * 1664525u + 1013904223u;
+                b = static_cast<uint8_t>(x >> 24);
+            }
+            const std::vector<uint8_t> packed = BUCompress::Compress(noise);
+            BUDecompress d;
+            d.ParseHeader(packed.data(), packed.size());
+            bool aligned = d.GetNbSectors() > 1;
+            for (uint32_t s = 0; s + 1 < d.GetNbSectors(); ++s)
+                aligned = aligned && d.SectorEnd(s) % 4 == 0;
+            Check(aligned, "a cut sector ends on a 4-byte boundary");
+            Check(BUDecompress::Decompress(packed) == noise, "cut sectors round-trip");
+        }
     }
 
     void TestStringTable()

@@ -195,7 +195,6 @@ struct BUCompressOptions
     uint32_t bigChunkSize = BUDecompress::kDefaultBigChunkSize;
     int level = Z_BEST_SPEED;
     bool bigEndian32 = true;
-    uint32_t feedSize = 4096;
 };
 
 class BUCompress
@@ -203,66 +202,26 @@ class BUCompress
 public:
     using Options = BUCompressOptions;
 
-    static void FillWithEmptyBlocks(std::vector<uint8_t>& sector, size_t from)
-    {
-        static const uint8_t kEmptyStoredBlock[5] = { 0x00, 0x00, 0x00, 0xFF, 0xFF };
-        for (size_t i = from; i < sector.size(); ++i)
-            sector[i] = kEmptyStoredBlock[(i - from) % 5];
-    }
+    static constexpr uint8_t kChunkPadding = 0xDA;
 
+    // Reproduces the retail packer's output byte for byte.
     static std::vector<uint8_t> Compress(const uint8_t* data, size_t size, const Options& opt = Options())
     {
-        if (opt.sectorSize < 1024 || opt.feedSize == 0 || opt.feedSize >= opt.sectorSize / 2 ||
-            opt.bigChunkSize < opt.sectorSize)
+        if (opt.sectorSize < 1024 || opt.bigChunkSize < opt.sectorSize)
             throw std::runtime_error("BUCompress: bad options");
 
         std::vector<std::vector<uint8_t>> sectors;
         std::vector<uint64_t> table;
-        size_t pos = 0;
-        while (pos < size)
+        std::vector<uint8_t> inflated(opt.bigChunkSize);
+        size_t lastUsed = 0;
+        for (size_t pos = 0; pos < size;)
         {
-
-            std::vector<uint8_t> sector(opt.sectorSize, 0);
-            z_stream strm{};
-            if (deflateInit(&strm, opt.level) != Z_OK)
-                throw std::runtime_error("BUCompress: deflateInit failed");
-            strm.next_out = sector.data();
-            strm.avail_out = static_cast<uInt>(sector.size());
-            size_t committed = pos;
-            bool sectorFull = false;
-
-            const size_t sectorInputCap = pos + opt.bigChunkSize;
-            while (committed < size && committed < sectorInputCap && !sectorFull)
-            {
-                const size_t piece = std::min<size_t>({ size_t(opt.feedSize), size - committed, sectorInputCap - committed });
-                const Bytef* pieceStart = data + committed;
-                const uInt outBefore = strm.avail_out;
-                strm.next_in = const_cast<Bytef*>(pieceStart);
-                strm.avail_in = static_cast<uInt>(piece);
-                const int rc = deflate(&strm, Z_SYNC_FLUSH);
-                if (rc != Z_OK && rc != Z_BUF_ERROR)
-                {
-                    deflateEnd(&strm);
-                    throw std::runtime_error("BUCompress: deflate failed");
-                }
-                if (strm.avail_in != 0 || strm.avail_out == 0)
-                {
-
-                    sectorFull = true;
-                    (void)outBefore;
-                    break;
-                }
-                committed += piece;
-            }
-            const size_t written = sector.size() - strm.avail_out;
-            deflateEnd(&strm);
-            if (committed == pos)
-                throw std::runtime_error("BUCompress: a single piece does not fit a sector");
-            if (committed < size)
-                FillWithEmptyBlocks(sector, written);
-            sectors.push_back(std::move(sector));
-            table.push_back(committed);
-            pos = committed;
+            const size_t chunk = std::min<size_t>(opt.bigChunkSize, size - pos);
+            Sector sector = PackSector(data + pos, chunk, pos + chunk == size, opt, inflated);
+            pos += sector.input;
+            table.push_back(pos);
+            lastUsed = sector.used;
+            sectors.push_back(std::move(sector.bytes));
         }
 
         const uint32_t nbSectors = static_cast<uint32_t>(sectors.size());
@@ -295,15 +254,7 @@ public:
         const size_t tablesSize = fixedHeader + nbSectors * entry + lookup.size() * 4;
         const uint64_t headerSize = ((tablesSize + opt.sectorSize - 1) / opt.sectorSize) * opt.sectorSize;
 
-        uint64_t compDataSize = uint64_t(nbSectors) * opt.sectorSize;
-        if (nbSectors)
-        {
-            const auto& last = sectors.back();
-            size_t used = last.size();
-            while (used > 0 && last[used - 1] == 0)
-                --used;
-            compDataSize = uint64_t(nbSectors - 1) * opt.sectorSize + used;
-        }
+        const uint64_t compDataSize = nbSectors ? uint64_t(nbSectors - 1) * opt.sectorSize + lastUsed : 0;
 
         std::vector<uint8_t> out;
         out.reserve(static_cast<size_t>(headerSize + uint64_t(nbSectors) * opt.sectorSize));
@@ -351,4 +302,230 @@ public:
     {
         return Compress(data.data(), data.size(), opt);
     }
+
+private:
+    static constexpr long kSymbolsPerBlock = (1L << (8 + 6)) - 1;   // zlib's lit_bufsize - 1 at memLevel 8
+
+    struct Sector
+    {
+        std::vector<uint8_t> bytes;
+        size_t input = 0;
+        size_t used = 0;
+    };
+
+    // The next chunk deflated from scratch and cut to one sector, which covers what the cut inflates to (4-aligned).
+    static Sector PackSector(const uint8_t* data, size_t chunk, bool endsFile, const Options& opt,
+                             std::vector<uint8_t>& inflated)
+    {
+        const size_t cap = size_t(opt.sectorSize) + 16;
+        std::vector<uint8_t> stream = DeflateChunk(data, chunk, opt.level, cap, false);
+        if (stream.size() < cap && EndsWithFullBlock(stream))
+            stream = DeflateChunk(data, chunk, opt.level, cap, true);
+
+        Sector sector;
+        sector.used = std::min<size_t>(stream.size(), opt.sectorSize);
+        if (stream.size() <= opt.sectorSize)
+        {
+            sector.input = chunk;
+            stream.resize(opt.sectorSize, endsFile ? uint8_t(0) : kChunkPadding);
+        }
+        else
+        {
+            stream.resize(opt.sectorSize);
+            sector.input = InflatableSize(stream, inflated) & ~size_t(3);
+            if (!sector.input)
+                throw std::runtime_error("BUCompress: a sector holds less than 4 bytes of input");
+        }
+        sector.bytes = std::move(stream);
+        return sector;
+    }
+
+    static std::vector<uint8_t> DeflateChunk(const uint8_t* data, size_t size, int level, size_t cap, bool emptyBlock)
+    {
+        std::vector<uint8_t> out(cap);
+        z_stream strm{};
+        if (deflateInit(&strm, level) != Z_OK)
+            throw std::runtime_error("BUCompress: deflateInit failed");
+        strm.next_in = const_cast<Bytef*>(data);
+        strm.avail_in = static_cast<uInt>(size);
+        strm.next_out = out.data();
+        strm.avail_out = static_cast<uInt>(out.size());
+        int rc = deflate(&strm, emptyBlock ? Z_PARTIAL_FLUSH : Z_SYNC_FLUSH);
+        if (emptyBlock && rc == Z_OK && strm.avail_out)
+            rc = deflate(&strm, Z_SYNC_FLUSH);
+        out.resize(out.size() - strm.avail_out);
+        deflateEnd(&strm);
+        if (rc != Z_OK && rc != Z_BUF_ERROR)
+            throw std::runtime_error("BUCompress: deflate failed");
+        return out;
+    }
+
+    static size_t InflatableSize(const std::vector<uint8_t>& stream, std::vector<uint8_t>& out)
+    {
+        z_stream strm{};
+        if (inflateInit(&strm) != Z_OK)
+            throw std::runtime_error("BUCompress: inflateInit failed");
+        strm.next_in = const_cast<Bytef*>(stream.data());
+        strm.avail_in = static_cast<uInt>(stream.size());
+        strm.next_out = out.data();
+        strm.avail_out = static_cast<uInt>(out.size());
+        int rc = Z_OK;
+        while (rc == Z_OK && strm.avail_in && strm.avail_out)
+            rc = inflate(&strm, Z_NO_FLUSH);
+        const size_t produced = strm.total_out;
+        inflateEnd(&strm);
+        return produced;
+    }
+
+    // zlib 1.2.3 (retail) follows a full block it sync-flushes with an empty fixed block; newer zlib does not.
+    static bool EndsWithFullBlock(const std::vector<uint8_t>& stream)
+    {
+        static const uint8_t kLengthExtra[29] = { 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2,
+                                                  2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0 };
+        static const uint8_t kDistanceExtra[30] = { 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6,
+                                                    6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13 };
+        static const uint8_t kCodeLengthOrder[19] = { 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 };
+        BitReader br{ stream.data(), stream.size() };
+        try
+        {
+            br.Bits(16);
+            long lastSymbols = -1;
+            for (;;)
+            {
+                const uint32_t last = br.Bits(1);
+                const uint32_t type = br.Bits(2);
+                long symbols = -1;
+                if (type == 0)
+                {
+                    br.pos = (br.pos + 7) & ~size_t(7);
+                    const uint32_t len = br.Bits(16);
+                    br.Bits(16);
+                    if (len == 0)
+                        return lastSymbols == kSymbolsPerBlock;
+                    br.pos += size_t(len) * 8;
+                }
+                else if (type == 1 || type == 2)
+                {
+                    uint8_t lengths[320] = {};
+                    int nlen = 288, ndist = 30;
+                    if (type == 1)
+                    {
+                        std::fill(lengths, lengths + 144, uint8_t(8));
+                        std::fill(lengths + 144, lengths + 256, uint8_t(9));
+                        std::fill(lengths + 256, lengths + 280, uint8_t(7));
+                        std::fill(lengths + 280, lengths + 288, uint8_t(8));
+                        std::fill(lengths + 288, lengths + 318, uint8_t(5));
+                    }
+                    else
+                    {
+                        nlen = static_cast<int>(br.Bits(5)) + 257;
+                        ndist = static_cast<int>(br.Bits(5)) + 1;
+                        const int ncode = static_cast<int>(br.Bits(4)) + 4;
+                        uint8_t codeLengths[19] = {};
+                        for (int i = 0; i < ncode; ++i)
+                            codeLengths[kCodeLengthOrder[i]] = static_cast<uint8_t>(br.Bits(3));
+                        const Huffman lencode(codeLengths, 19);
+                        for (int i = 0; i < nlen + ndist;)
+                        {
+                            const int s = lencode.Decode(br);
+                            int repeat = 1;
+                            uint8_t value = static_cast<uint8_t>(s);
+                            if (s == 16)
+                            {
+                                if (i == 0)
+                                    return false;
+                                value = lengths[i - 1];
+                                repeat = 3 + static_cast<int>(br.Bits(2));
+                            }
+                            else if (s == 17 || s == 18)
+                            {
+                                value = 0;
+                                repeat = s == 17 ? 3 + static_cast<int>(br.Bits(3)) : 11 + static_cast<int>(br.Bits(7));
+                            }
+                            if (i + repeat > nlen + ndist)
+                                return false;
+                            while (repeat--)
+                                lengths[i++] = value;
+                        }
+                    }
+                    const Huffman lit(lengths, nlen), dist(lengths + nlen, ndist);
+                    for (symbols = 0;; ++symbols)
+                    {
+                        const int s = lit.Decode(br);
+                        if (s == 256)
+                            break;
+                        if (s > 256)
+                        {
+                            if (s > 285)
+                                return false;
+                            br.Bits(kLengthExtra[s - 257]);
+                            const int d = dist.Decode(br);
+                            if (d > 29)
+                                return false;
+                            br.Bits(kDistanceExtra[d]);
+                        }
+                    }
+                }
+                else
+                    return false;
+                if (last)
+                    return false;
+                lastSymbols = symbols;
+            }
+        }
+        catch (const std::exception&)
+        {
+            return false;
+        }
+    }
+
+    struct BitReader
+    {
+        const uint8_t* data;
+        size_t size;
+        size_t pos = 0;
+
+        uint32_t Bits(int n)
+        {
+            if (pos + size_t(n) > size * 8)
+                throw std::out_of_range("BitReader: past the end");
+            uint32_t v = 0;
+            for (int i = 0; i < n; ++i, ++pos)
+                v |= uint32_t((data[pos >> 3] >> (pos & 7)) & 1) << i;
+            return v;
+        }
+    };
+
+    struct Huffman
+    {
+        uint16_t count[16] = {};
+        std::vector<uint16_t> symbol;
+
+        Huffman(const uint8_t* lengths, int n) : symbol(size_t(n))
+        {
+            for (int s = 0; s < n; ++s)
+                ++count[lengths[s]];
+            uint16_t offs[16] = {};
+            for (int len = 1; len < 15; ++len)
+                offs[len + 1] = static_cast<uint16_t>(offs[len] + count[len]);
+            for (int s = 0; s < n; ++s)
+                if (lengths[s])
+                    symbol[offs[lengths[s]]++] = static_cast<uint16_t>(s);
+        }
+
+        int Decode(BitReader& br) const
+        {
+            int code = 0, first = 0, index = 0;
+            for (int len = 1; len < 16; ++len)
+            {
+                code |= static_cast<int>(br.Bits(1));
+                if (code - count[len] < first)
+                    return symbol[size_t(index + (code - first))];
+                index += count[len];
+                first = (first + count[len]) << 1;
+                code <<= 1;
+            }
+            throw std::runtime_error("BUCompress: bad Huffman code");
+        }
+    };
 };
