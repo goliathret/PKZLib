@@ -145,6 +145,11 @@ public:
         return nullptr;
     }
 
+    static CMChunk* FindRootAtOffset(PKPackage& pkg, uint64_t fileOffset)
+    {
+        return const_cast<CMChunk*>(FindRootAtOffset(static_cast<const PKPackage&>(pkg), fileOffset));
+    }
+
     std::vector<uint8_t> DecodeLevel0() const
     {
         if (!desc.Is2D())
@@ -311,6 +316,61 @@ public:
         return levels;
     }
 
+    // Re-encodes from an RGBA8 image in the texture's own size, format and mip count, so the data keeps its layout.
+    void Reencode(const uint8_t* rgba, uint32_t width, uint32_t height)
+    {
+        if (width != desc.width || height != desc.height)
+            throw std::runtime_error("RZTexture: " + name + " is " + std::to_string(desc.width) + "x" +
+                                     std::to_string(desc.height) + ", the image is " + std::to_string(width) + "x" +
+                                     std::to_string(height));
+        if (!desc.Is2D())
+            throw std::runtime_error("RZTexture: only 2D textures are re-encoded (" + name + ")");
+        const XenosTexture::D3DFormat f = desc.Format();
+        std::vector<BUDds::Level> levels(desc.mipLevels ? desc.mipLevels : 1);
+        std::vector<uint8_t> image(rgba, rgba + size_t(width) * height * 4);
+        for (size_t i = 0; i < levels.size(); ++i)
+        {
+            levels[i].width = width;
+            levels[i].height = height;
+            levels[i].data = XenosTexture::EncodeRGBA8(image.data(), width, height, f);
+            if (i + 1 < levels.size())
+            {
+                image = HalveRGBA8(image.data(), width, height);
+                width = std::max(1u, width / 2);
+                height = std::max(1u, height / 2);
+            }
+        }
+        const Descriptor before = desc;
+        const size_t oldSize = gpuData.size();
+        SetLevels(levels);
+        if (gpuData.size() > oldSize || desc.mipChainOffset != before.mipChainOffset || desc.f13 != before.f13 ||
+            desc.minLevelSize != before.minLevelSize)
+            throw std::runtime_error("RZTexture: " + name + " does not lay out like the original");
+        gpuData.resize(oldSize, 0);
+        desc = before;
+    }
+
+    // Writes gpuData over this texture's data in pkg (it must keep its size) and updates both post-load CRCs.
+    void Store(PKPackage& pkg) const
+    {
+        CMChunk* libraryHeader = FindLibraryHeader(pkg, nameCRC);
+        if (!libraryHeader)
+            throw std::runtime_error("RZTexture: no texture header for " + name);
+        CMChunk* post = FindRootAtOffset(pkg, CMChunkResourceHeader(*libraryHeader).GetDataOffset());
+        CMChunk* data = post ? post->FindChild(Texture_Data) : nullptr;
+        if (!data)
+            throw std::runtime_error("RZTexture: no Texture_Data for " + name);
+        const size_t descSize = Descriptor::Parse(*data).Size();
+        if (data->data.size() != descSize + gpuData.size())
+            throw std::runtime_error("RZTexture: the new data for " + name + " changes the Texture_Data size");
+        std::copy(gpuData.begin(), gpuData.end(), data->data.begin() + static_cast<std::ptrdiff_t>(descSize));
+
+        const uint32_t crc = PostLoadCRC(data->data, data->isLittleEndian);
+        CMChunkResourceHeader::SetPostLoadDataCRC(*libraryHeader, crc);
+        if (CMChunk* postHeader = post->FindChild(GenSub_ResourceHeader))
+            CMChunkResourceHeader::SetPostLoadDataCRC(*postHeader, crc);
+    }
+
     CMChunk BuildTextureData(bool littleEndian = false) const
     {
         CMChunk data = CMChunk::Leaf(Texture_Data, 7, {});
@@ -359,6 +419,27 @@ public:
     }
 
 private:
+    static CMChunk* FindLibraryHeader(PKPackage& pkg, uint32_t nameCRC)
+    {
+        for (CMChunk& root : pkg.rootChunks)
+        {
+            if (root.GetMaskedID() != Root)
+                continue;
+            for (CMChunk& lib : root.children)
+            {
+                if (lib.GetMaskedID() != Gen_TextureLibrary)
+                    continue;
+                for (CMChunk& res : lib.children)
+                {
+                    CMChunk* header = res.FindChild(GenSub_ResourceHeader);
+                    if (header && CMChunkResourceHeader(*header).GetCRC() == nameCRC)
+                        return header;
+                }
+            }
+        }
+        return nullptr;
+    }
+
     // The packed tail's surface in blocks: 32x32, or wider or taller for a thin texture's levels.
     static void PackedTailBlocks(uint32_t width, uint32_t height, uint32_t first, uint32_t mips,
                                  const XenosTexture::D3DFormat& f, uint32_t& wBlocks, uint32_t& hBlocks)
@@ -373,5 +454,26 @@ private:
             wBlocks = std::max(wBlocks, XenosTexture::AlignUp(ox + (w + blockDim - 1) / blockDim, 32));
             hBlocks = std::max(hBlocks, XenosTexture::AlignUp(oy + (h + blockDim - 1) / blockDim, 32));
         }
+    }
+
+    static std::vector<uint8_t> HalveRGBA8(const uint8_t* rgba, uint32_t width, uint32_t height)
+    {
+        const uint32_t w = std::max(1u, width / 2), h = std::max(1u, height / 2);
+        std::vector<uint8_t> out(size_t(w) * h * 4);
+        for (uint32_t y = 0; y < h; ++y)
+        {
+            const uint32_t y0 = std::min(y * 2, height - 1), y1 = std::min(y * 2 + 1, height - 1);
+            for (uint32_t x = 0; x < w; ++x)
+            {
+                const uint32_t x0 = std::min(x * 2, width - 1), x1 = std::min(x * 2 + 1, width - 1);
+                for (int c = 0; c < 4; ++c)
+                {
+                    const uint32_t sum = rgba[(size_t(y0) * width + x0) * 4 + c] + rgba[(size_t(y0) * width + x1) * 4 + c] +
+                                         rgba[(size_t(y1) * width + x0) * 4 + c] + rgba[(size_t(y1) * width + x1) * 4 + c];
+                    out[(size_t(y) * w + x) * 4 + c] = static_cast<uint8_t>((sum + 2) / 4);
+                }
+            }
+        }
+        return out;
     }
 };

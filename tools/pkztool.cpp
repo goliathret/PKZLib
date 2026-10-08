@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -366,6 +367,34 @@ namespace
         return 1;
     }
 
+    int Retexture(const std::string& in, const std::string& out, int count, char** pairs)
+    {
+        PKPackage pkg;
+        pkg.isLittleEndian = gLittleEndian;
+        pkg.ReadFromFile(in);
+        const std::vector<CMChunkResourceHeader> headers = RZTexture::Headers(pkg);
+        for (int k = 0; k + 1 < count; k += 2)
+        {
+            const std::string name = pairs[k];
+            const auto h = std::find_if(headers.begin(), headers.end(),
+                                        [&](const CMChunkResourceHeader& x) { return x.GetName() == name; });
+            if (h == headers.end())
+                throw std::runtime_error("no texture named " + name);
+            RZTexture t = RZTexture::Load(pkg, *h);
+            const std::vector<uint8_t> png = ReadFile(pairs[k + 1]);
+            const BUPng::Image img = BUPng::Decode(png.data(), png.size());
+            t.Reencode(img.rgba.data(), img.width, img.height);
+            t.Store(pkg);
+            std::printf("%s <- %s: %ux%u %s, %u mips\n", name.c_str(), pairs[k + 1], t.desc.width, t.desc.height,
+                        t.desc.Format().Name(), t.desc.mipLevels);
+        }
+        const bool compress = out.size() > 4 && out.compare(out.size() - 4, 4, ".pkz") == 0;
+        pkg.WriteToFile(out, compress);
+        std::printf("%s: %llu bytes raw%s\n", out.c_str(), static_cast<unsigned long long>(pkg.GetPackageSize()),
+                    compress ? ", compressed container" : "");
+        return 0;
+    }
+
 
     int Fields(const std::string& path, int maxDepth, const std::string& filter)
     {
@@ -403,6 +432,8 @@ namespace
                      "  make-strings <out.pkz> <packageId> <packageName> <strings.txt> [--compress] [--lang MASK]\n"
                      "  textures <file>                       list the textures (size, format, tiling)\n"
                      "  texture <file> <name> <out.png|.bin>  export level 0 as PNG, or the raw descriptor + GPU bytes\n"
+                     "  retexture <in> <out.pak|.pkz> <name> <in.png> [<name> <in.png>...]\n"
+                     "                                        re-encode textures in place from PNGs of the same size\n"
                      "  font <file> [name]                    dump the bitmap fonts' glyph tables\n"
                      "  font-atlas <file> <font> <out.png>    the font's atlas with every glyph box drawn\n"
                      "  hud <file> [name]                     dump the HUD window definitions\n"
@@ -451,6 +482,7 @@ int main(int argc, char** argv)
         if (cmd == "make-strings") return MakeStrings(rest, argv + i);
         if (cmd == "textures" && rest >= 1) return Textures(argv[i]);
         if (cmd == "texture" && rest >= 3) return TextureExport(argv[i], argv[i + 1], argv[i + 2]);
+        if (cmd == "retexture" && rest >= 4 && rest % 2 == 0) return Retexture(argv[i], argv[i + 1], rest - 2, argv + i + 2);
         if (cmd == "font" && rest >= 1) return pkztool::Font(argv[i], rest >= 2 ? argv[i + 1] : "", gLittleEndian);
         if (cmd == "font-atlas" && rest >= 3) return pkztool::FontAtlas(argv[i], argv[i + 1], argv[i + 2], gLittleEndian);
         if (cmd == "hud" && rest >= 1) return pkztool::Hud(argv[i], rest >= 2 ? argv[i + 1] : "", gLittleEndian);

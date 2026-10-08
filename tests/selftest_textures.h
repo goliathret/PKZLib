@@ -118,5 +118,31 @@ namespace selftest
                       t.desc.minLevelSize == 0x00100010,
                   "a mip chain starting in the packed tail points at its level's blocks");
         }
+
+        {
+            PKPackageBuilder b;
+            b.packageId = 0x7EE;
+            b.packageName = "SelfTest";
+            std::vector<uint8_t> before(16 * 16 * 4, 40), after(16 * 16 * 4);
+            for (size_t i = 0; i < after.size(); ++i)
+                after[i] = uint8_t(i * 7);
+            b.textures.push_back(RZTexture::FromRGBA8("SelfTest_Swap", before.data(), 16, 16));
+            PKPackage pkg;
+            pkg.ReadFromMemory(b.Build().Serialize());
+            const uint64_t size = pkg.GetPackageSize();
+            RZTexture t = RZTexture::Load(pkg, RZTexture::Headers(pkg)[0]);
+            t.Reencode(after.data(), 16, 16);
+            t.Store(pkg);
+            PKPackage back;
+            back.ReadFromMemory(pkg.Serialize());
+            const CMChunkResourceHeader h = RZTexture::Headers(back)[0];
+            const CMChunk* post = RZTexture::FindRootAtOffset(back, h.GetDataOffset());
+            const uint32_t crc = RZTexture::PostLoadCRC(post->FindChild(Texture_Data)->data, false);
+            Check(back.GetPackageSize() == size && RZTexture::Load(back, h).DecodeLevel0() == after,
+                  "a re-encoded texture is stored in place");
+            Check(h.GetPostLoadDataCRC() == crc &&
+                      CMChunkResourceHeader(*post->FindChild(GenSub_ResourceHeader)).GetPostLoadDataCRC() == crc,
+                  "storing a texture updates both post-load CRCs");
+        }
     }
 }

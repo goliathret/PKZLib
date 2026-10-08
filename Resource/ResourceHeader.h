@@ -55,6 +55,13 @@ public:
         return c;
     }
 
+    static void SetPostLoadDataCRC(CMChunk& header, uint32_t crc)
+    {
+        const size_t at = CMChunkResourceHeader(header).bWideOffset ? 24 : 20;
+        for (int i = 0; i < 4; ++i)
+            header.data[at + size_t(i)] = static_cast<uint8_t>(crc >> (header.isLittleEndian ? 8 * i : 24 - 8 * i));
+    }
+
     CMResourceType GetResourceType() const { return static_cast<CMResourceType>(uiResourceType); }
     std::string GetResourceTypeName() const { return ToString(GetResourceType()); }
     uint32_t GetRawResourceType() const { return uiResourceType; }
