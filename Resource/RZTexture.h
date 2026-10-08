@@ -282,11 +282,21 @@ public:
         return t;
     }
 
+    CMChunk BuildTextureData(bool littleEndian = false) const
+    {
+        CMChunk data = CMChunk::Leaf(Texture_Data, 7, {});
+        data.isLittleEndian = littleEndian;
+        desc.Write(data);
+        data.AppendBytes(gpuData.data(), gpuData.size());
+        return data;
+    }
+
     CMChunk BuildLibraryResource(uint64_t dataOffset, bool littleEndian = false) const
     {
         CMChunk res = CMChunk::Container(GenSub_Resource, 1);
         res.isLittleEndian = littleEndian;
-        res.AddChild(CMChunkResourceHeader::Build(nameCRC, 4, languageMask, 0, dataOffset, PostLoadCRC(), name, littleEndian));
+        const uint32_t crc = PostLoadCRC(BuildTextureData(littleEndian).data, littleEndian);
+        res.AddChild(CMChunkResourceHeader::Build(nameCRC, 4, languageMask, 0, dataOffset, crc, name, littleEndian));
         CMChunk tex = CMChunk::Container(Texture, 6);
         tex.isLittleEndian = littleEndian;
         res.AddChild(std::move(tex));
@@ -297,16 +307,19 @@ public:
     {
         CMChunk post = CMChunk::Container(Gen_PostLoadData, 1);
         post.isLittleEndian = littleEndian;
-        post.AddChild(CMChunkResourceHeader::Build(nameCRC, 4, languageMask, 0, dataOffset, PostLoadCRC(), name, littleEndian));
-        CMChunk data = CMChunk::Leaf(Texture_Data, 7, {});
-        data.isLittleEndian = littleEndian;
-        desc.Write(data);
-        data.AppendBytes(gpuData.data(), gpuData.size());
+        CMChunk data = BuildTextureData(littleEndian);
+        const uint32_t crc = PostLoadCRC(data.data, littleEndian);
+        post.AddChild(CMChunkResourceHeader::Build(nameCRC, 4, languageMask, 0, dataOffset, crc, name, littleEndian));
         post.AddChild(std::move(data));
         return post;
     }
 
-    uint32_t PostLoadCRC() const { return BUCRC().GenerateRaw(gpuData.data(), gpuData.size()); }
+    // CRC-32 of the Texture_Data payload, stored little-endian even in big-endian packages.
+    static uint32_t PostLoadCRC(const std::vector<uint8_t>& textureData, bool littleEndian)
+    {
+        const uint32_t crc = BUCRC().GenerateRaw(textureData.data(), textureData.size());
+        return littleEndian ? crc : (crc >> 24) | ((crc >> 8) & 0xFF00u) | ((crc << 8) & 0xFF0000u) | (crc << 24);
+    }
 
     static uint64_t RootChunkOffset(const PKPackage& pkg, size_t rootIndex)
     {
