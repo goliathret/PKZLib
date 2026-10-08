@@ -344,7 +344,7 @@ inline std::string ResolveGameSchema(const std::string& game)
         key == "spider-man-shattered-dimensions-pc")
         file = "SD-PC.xml";
     else if (key == "eot" || key == "edge-of-time")
-        file = "EOT.xml";  // if present
+        file = "EOT-360.xml";
     else
         file = game + ".xml";  // allow arbitrary -g Foo -> schemas/Foo.xml
 
