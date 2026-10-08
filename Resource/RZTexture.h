@@ -149,9 +149,8 @@ public:
     {
         if (!desc.Is2D())
             throw std::runtime_error("RZTexture: only 2D textures are decoded (" + name + ")");
-        const XenosTexture::D3DFormat f = desc.Format();
-        const std::vector<uint8_t> linear = XenosTexture::Untile(gpuData.data(), gpuData.size(), desc.width, desc.height, f);
-        return XenosTexture::DecodeToRGBA8(linear, desc.width, desc.height, f);
+        const std::vector<BUDds::Level> levels = Levels(1);
+        return XenosTexture::DecodeToRGBA8(levels[0].data, levels[0].width, levels[0].height, desc.Format());
     }
 
     static RZTexture FromRGBA8(const std::string& name, const uint8_t* rgba, uint32_t width, uint32_t height,
@@ -162,14 +161,10 @@ public:
         t.nameCRC = BUCRC().Generate(name);
         t.desc.width = width;
         t.desc.height = height;
-        t.desc.mipLevels = 1;
         t.desc.d3dFormat = d3dFormat;
-        t.desc.minLevelSize = (width << 16) | height;
-        const XenosTexture::D3DFormat f = t.desc.Format();
-        if (f.format != XenosTexture::kFormat_8_8_8_8)
+        if (t.desc.Format().format != XenosTexture::kFormat_8_8_8_8)
             throw std::runtime_error("RZTexture::FromRGBA8 writes 8_8_8_8 only");
-        const std::vector<uint8_t> linear = XenosTexture::EncodeRGBA8To8888(rgba, width, height);
-        t.gpuData = XenosTexture::Tile(linear.data(), width, height, f);
+        t.SetLevels({ BUDds::Level{ width, height, XenosTexture::EncodeRGBA8To8888(rgba, width, height) } });
 
         const size_t padded = (t.gpuData.size() + 0x3FFF) & ~size_t(0x3FFF);
         t.gpuData.resize(padded, 0);
@@ -182,35 +177,6 @@ public:
         Linear,
         NormalMap
     };
-
-    static uint32_t PackedMipLevel(uint32_t width, uint32_t height)
-    {
-        const uint32_t log2Size = XenosTexture::Log2(std::min(width, height));
-        return log2Size > 4 ? log2Size - 4 : 0;
-    }
-
-    static void PackedMipOffset(uint32_t width, uint32_t height, uint32_t mip, uint32_t blockDim, uint32_t& xBlocks,
-                                uint32_t& yBlocks)
-    {
-        const uint32_t log2Width = XenosTexture::Log2(width), log2Height = XenosTexture::Log2(height);
-        const uint32_t log2Size = std::min(log2Width, log2Height);
-        const uint32_t packedBase = log2Size > 4 ? log2Size - 4 : 0;
-        const uint32_t packedMip = mip - packedBase;
-        uint32_t x = 0, y = 0;
-        if (packedMip < 3)
-        {
-            if (log2Width > log2Height)
-                y = 16 >> packedMip;
-            else
-                x = 16 >> packedMip;
-        }
-        else if (log2Width > log2Height)
-            x = (1u << (log2Width - packedBase)) >> (packedMip - 2);
-        else
-            y = (1u << (log2Height - packedBase)) >> (packedMip - 2);
-        xBlocks = x / blockDim;
-        yBlocks = y / blockDim;
-    }
 
     static RZTexture FromDds(const std::string& name, const std::vector<uint8_t>& file, bool baseLevelOnly = false,
                              DdsColor color = DdsColor::Gamma, float scale = 1.0f)
@@ -238,48 +204,111 @@ public:
                               : color == DdsColor::Linear  ? XenosTexture::D3DFormat::kDXT1TiledLinearColor
                                                            : XenosTexture::D3DFormat::kDXT5Tiled;
         t.desc.d3dFormat = (base & ~0x3Fu) | format;
-        const XenosTexture::D3DFormat f = t.desc.Format();
+        t.SetLevels(img.levels);
+        return t;
+    }
 
-        const uint32_t mips = t.desc.mipLevels;
+    // Lays linear mip levels out as retail does and sets the descriptor's mip fields to match.
+    void SetLevels(const std::vector<BUDds::Level>& levels)
+    {
+        if (levels.empty())
+            throw std::runtime_error("RZTexture: no mip levels for " + name);
+        const XenosTexture::D3DFormat f = desc.Format();
+        const uint32_t mips = static_cast<uint32_t>(levels.size());
         const uint32_t tailLevels = mips > 2 ? mips - 2 : 1;
         const uint32_t tailFirst = mips - tailLevels;
-        const uint32_t packedLevel = PackedMipLevel(img.width, img.height);
+        const uint32_t packedLevel = XenosTexture::PackedMipLevel(desc.width, desc.height);
         const uint32_t bd = f.BlockDim();
-        for (size_t i = 0; i < img.levels.size(); ++i)
+        const uint32_t bpb = f.BytesPerBlock();
+        desc.mipLevels = mips;
+        desc.mipChainOffset = 0xFFFFFFFFu;
+        gpuData.clear();
+        for (size_t i = 0; i < levels.size(); ++i)
         {
-            const BUDds::Level& level = img.levels[i];
-            if (i == tailFirst && i > 0)
-                t.desc.mipChainOffset = static_cast<uint32_t>(t.gpuData.size());
+            const BUDds::Level& level = levels[i];
             if (i < packedLevel)
             {
+                if (i == tailFirst && i > 0)
+                    desc.mipChainOffset = static_cast<uint32_t>(gpuData.size());
                 const std::vector<uint8_t> tiled = XenosTexture::Tile(level.data.data(), level.width, level.height, f);
-                t.gpuData.insert(t.gpuData.end(), tiled.begin(), tiled.end());
+                gpuData.insert(gpuData.end(), tiled.begin(), tiled.end());
                 continue;
             }
-            const uint32_t bpb = f.BytesPerBlock();
-            std::vector<uint8_t> tail(size_t(32) * 32 * bpb, 0);
-            for (size_t k = i; k < img.levels.size(); ++k)
+            uint32_t tw = 0, th = 0;
+            PackedTailBlocks(desc.width, desc.height, static_cast<uint32_t>(i), mips, f, tw, th);
+            if (tailFirst >= i && tailFirst > 0)
             {
-                const BUDds::Level& sub = img.levels[k];
+                // A wholly packed texture counts mipChainOffset from the end of its tail.
                 uint32_t ox = 0, oy = 0;
-                PackedMipOffset(img.width, img.height, static_cast<uint32_t>(k), bd, ox, oy);
+                XenosTexture::PackedMipOffset(desc.width, desc.height, tailFirst, f, ox, oy);
+                const size_t base = i > 0 ? gpuData.size() : size_t(tw) * th * bpb;
+                desc.mipChainOffset = static_cast<uint32_t>(base + (size_t(oy) * tw + ox) * bpb);
+            }
+            std::vector<uint8_t> tail(size_t(tw) * th * bpb, 0);
+            for (size_t k = i; k < levels.size(); ++k)
+            {
+                const BUDds::Level& sub = levels[k];
+                uint32_t ox = 0, oy = 0;
+                XenosTexture::PackedMipOffset(desc.width, desc.height, static_cast<uint32_t>(k), f, ox, oy);
                 const uint32_t bw = (sub.width + bd - 1) / bd, bh = (sub.height + bd - 1) / bd;
-                if (ox + bw > 32 || oy + bh > 32)
-                    throw std::runtime_error("RZTexture::FromDds: level " + std::to_string(k) + " of " + name +
+                if (ox + bw > tw || oy + bh > th)
+                    throw std::runtime_error("RZTexture: level " + std::to_string(k) + " of " + name +
                                              " does not fit the mip tail");
                 for (uint32_t y = 0; y < bh; ++y)
-                    std::memcpy(tail.data() + (size_t(oy + y) * 32 + ox) * bpb, sub.data.data() + size_t(y) * bw * bpb,
+                    std::memcpy(tail.data() + (size_t(oy + y) * tw + ox) * bpb, sub.data.data() + size_t(y) * bw * bpb,
                                 size_t(bw) * bpb);
             }
-            const std::vector<uint8_t> tiled = XenosTexture::Tile(tail.data(), 32 * bd, 32 * bd, f);
-            t.gpuData.insert(t.gpuData.end(), tiled.begin(), tiled.end());
+            const std::vector<uint8_t> tiled = XenosTexture::Tile(tail.data(), tw * bd, th * bd, f);
+            gpuData.insert(gpuData.end(), tiled.begin(), tiled.end());
             break;
         }
 
-        const BUDds::Level& tailTop = img.levels[tailFirst];
-        t.desc.f13 = tailLevels;
-        t.desc.minLevelSize = (tailTop.width << 16) | tailTop.height;
-        return t;
+        const BUDds::Level& tailTop = levels[tailFirst];
+        desc.f13 = tailLevels;
+        desc.minLevelSize = (tailTop.width << 16) | tailTop.height;
+    }
+
+    // The inverse of SetLevels: the first count mip levels as linear blocks.
+    std::vector<BUDds::Level> Levels(uint32_t count = UINT32_MAX) const
+    {
+        const XenosTexture::D3DFormat f = desc.Format();
+        const uint32_t mips = std::max(1u, desc.mipLevels);
+        const uint32_t wanted = std::min(mips, count);
+        const uint32_t packedLevel = XenosTexture::PackedMipLevel(desc.width, desc.height);
+        const uint32_t bd = f.BlockDim();
+        const uint32_t bpb = f.BytesPerBlock();
+        std::vector<BUDds::Level> levels;
+        size_t offset = 0;
+        for (uint32_t i = 0; i < wanted; ++i)
+        {
+            if (offset > gpuData.size())
+                throw std::runtime_error("RZTexture: " + name + " is shorter than its mip levels");
+            const uint32_t w = std::max(1u, desc.width >> i), h = std::max(1u, desc.height >> i);
+            if (i < packedLevel)
+            {
+                levels.push_back({ w, h, XenosTexture::Untile(gpuData.data() + offset, gpuData.size() - offset, w, h, f) });
+                offset += XenosTexture::TiledSurfaceSize(w, h, f);
+                continue;
+            }
+            uint32_t tw = 0, th = 0;
+            PackedTailBlocks(desc.width, desc.height, i, mips, f, tw, th);
+            const std::vector<uint8_t> tail =
+                XenosTexture::Untile(gpuData.data() + offset, gpuData.size() - offset, tw * bd, th * bd, f);
+            for (uint32_t k = i; k < wanted; ++k)
+            {
+                const uint32_t kw = std::max(1u, desc.width >> k), kh = std::max(1u, desc.height >> k);
+                uint32_t ox = 0, oy = 0;
+                XenosTexture::PackedMipOffset(desc.width, desc.height, k, f, ox, oy);
+                const uint32_t bw = (kw + bd - 1) / bd, bh = (kh + bd - 1) / bd;
+                BUDds::Level level{ kw, kh, std::vector<uint8_t>(size_t(bw) * bh * bpb) };
+                for (uint32_t y = 0; y < bh; ++y)
+                    std::memcpy(level.data.data() + size_t(y) * bw * bpb, tail.data() + (size_t(oy + y) * tw + ox) * bpb,
+                                size_t(bw) * bpb);
+                levels.push_back(std::move(level));
+            }
+            break;
+        }
+        return levels;
     }
 
     CMChunk BuildTextureData(bool littleEndian = false) const
@@ -327,5 +356,22 @@ public:
         for (size_t i = 0; i < rootIndex && i < pkg.rootChunks.size(); ++i)
             off += pkg.rootChunks[i].SerializedSize();
         return off;
+    }
+
+private:
+    // The packed tail's surface in blocks: 32x32, or wider or taller for a thin texture's levels.
+    static void PackedTailBlocks(uint32_t width, uint32_t height, uint32_t first, uint32_t mips,
+                                 const XenosTexture::D3DFormat& f, uint32_t& wBlocks, uint32_t& hBlocks)
+    {
+        const uint32_t blockDim = f.BlockDim();
+        wBlocks = hBlocks = 32;
+        for (uint32_t k = first; k < mips; ++k)
+        {
+            uint32_t ox = 0, oy = 0;
+            XenosTexture::PackedMipOffset(width, height, k, f, ox, oy);
+            const uint32_t w = std::max(1u, width >> k), h = std::max(1u, height >> k);
+            wBlocks = std::max(wBlocks, XenosTexture::AlignUp(ox + (w + blockDim - 1) / blockDim, 32));
+            hBlocks = std::max(hBlocks, XenosTexture::AlignUp(oy + (h + blockDim - 1) / blockDim, 32));
+        }
     }
 };

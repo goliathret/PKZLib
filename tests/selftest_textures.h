@@ -105,5 +105,18 @@ namespace selftest
             const std::vector<uint8_t> back = XenosTexture::DecodeToRGBA8(XenosTexture::EncodeRGBA8(rgba.data(), W, H, dxt1), W, H, dxt1);
             Check(back[3] == 0 && back[7] == 255 && back[4] == 0 && back[6] == 255, "DXT1 encode keeps a transparent texel");
         }
+
+        {
+            RZTexture t;
+            t.desc.width = t.desc.height = 64;
+            t.desc.d3dFormat = XenosTexture::D3DFormat::kDXT1Tiled;
+            std::vector<BUDds::Level> levels;
+            for (uint32_t s = 64; s >= 8; s /= 2)
+                levels.push_back({ s, s, std::vector<uint8_t>(size_t((s + 3) / 4) * ((s + 3) / 4) * 8, 0x11) });
+            t.SetLevels(levels);
+            Check(t.gpuData.size() == 3 * 8192 && t.desc.mipChainOffset == 0x4020 && t.desc.f13 == 2 &&
+                      t.desc.minLevelSize == 0x00100010,
+                  "a mip chain starting in the packed tail points at its level's blocks");
+        }
     }
 }
