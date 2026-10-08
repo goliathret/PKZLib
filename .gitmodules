@@ -1,3 +1,12 @@
 [submodule "contrib/zlib"]
 	path = contrib/zlib
 	url = https://github.com/madler/zlib.git
+[submodule "thirdparty/textures/stb"]
+	path = thirdparty/textures/stb
+	url = https://github.com/nothings/stb.git
+[submodule "thirdparty/textures/libsquish"]
+	path = thirdparty/textures/libsquish
+	url = https://github.com/oblivioncth/libsquish.git
+[submodule "thirdparty/textures/rexglue"]
+	path = thirdparty/textures/rexglue
+	url = https://github.com/Graine25/rexglue-textures.git
