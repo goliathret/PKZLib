@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -308,30 +309,80 @@ namespace
         return 0;
     }
 
-    int Textures(const std::string& path)
+    void PrintTexture(const PKPackage& pkg, const CMChunkResourceHeader& h)
+    {
+        try
+        {
+            const RZTexture t = RZTexture::Load(pkg, h);
+            const XenosTexture::D3DFormat f = t.desc.Format();
+            std::printf("%-56s %5ux%-5u mips %u %-10s %s%s d3dfmt %08X data %zu dim %u depth %u mipchain %08X min %08X\n",
+                        t.name.c_str(), t.desc.width, t.desc.height, t.desc.mipLevels, f.Name(),
+                        f.tiled ? "tiled" : "linear", t.desc.Is2D() ? "" : " (not 2D)", t.desc.d3dFormat,
+                        t.gpuData.size(), t.desc.dimension, t.desc.depth, t.desc.mipChainOffset, t.desc.minLevelSize);
+        }
+        catch (const std::exception& e)
+        {
+            std::printf("%-56s (%s)\n", h.GetName().c_str(), e.what());
+        }
+    }
+
+    // "Gen_AudioSampleLibrary" -> "audiosample"
+    std::string LibraryKind(const CMChunk& lib)
+    {
+        std::string s = ToString(lib.GetIDToEnum());
+        if (s.rfind("Gen_", 0) == 0)
+            s.erase(0, 4);
+        if (s.size() > 7 && s.compare(s.size() - 7, 7, "Library") == 0)
+            s.resize(s.size() - 7);
+        for (char& c : s)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    }
+
+    // With no kind, every library and its resource count; otherwise the resources of each library whose kind contains it.
+    int List(const std::string& path, std::string kind)
     {
         PKPackage pkg;
         pkg.isLittleEndian = gLittleEndian;
         pkg.ReadFromFile(path);
-        int n = 0;
-        for (const CMChunkResourceHeader& h : RZTexture::Headers(pkg))
+        for (char& c : kind)
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (kind.size() > 1 && kind.back() == 's')
+            kind.pop_back();
+        int listed = 0;
+        for (const CMChunk& root : pkg.rootChunks)
         {
-            try
+            if (root.GetMaskedID() != Root)
+                continue;
+            for (const CMChunk& lib : root.children)
             {
-                const RZTexture t = RZTexture::Load(pkg, h);
-                const XenosTexture::D3DFormat f = t.desc.Format();
-                std::printf("%-56s %5ux%-5u mips %u %-10s %s%s d3dfmt %08X data %zu dim %u depth %u mipchain %08X min %08X\n",
-                            t.name.c_str(), t.desc.width, t.desc.height, t.desc.mipLevels, f.Name(),
-                            f.tiled ? "tiled" : "linear", t.desc.Is2D() ? "" : " (not 2D)", t.desc.d3dFormat,
-                            t.gpuData.size(), t.desc.dimension, t.desc.depth, t.desc.mipChainOffset, t.desc.minLevelSize);
+                const std::vector<const CMChunk*> resources = lib.FindChildren(GenSub_Resource);
+                const std::string libKind = LibraryKind(lib);
+                if (resources.empty() || libKind.find(kind) == std::string::npos)
+                    continue;
+                ++listed;
+                if (kind.empty())
+                {
+                    std::printf("%-16s %5zu\n", libKind.c_str(), resources.size());
+                    continue;
+                }
+                std::printf("== %s: %zu\n", libKind.c_str(), resources.size());
+                for (const CMChunk* res : resources)
+                {
+                    const CMChunk* h = res->FindChild(GenSub_ResourceHeader);
+                    if (!h)
+                        continue;
+                    const CMChunkResourceHeader header(*h);
+                    if (lib.GetMaskedID() == Gen_TextureLibrary)
+                        PrintTexture(pkg, header);
+                    else
+                        std::printf("%-56s crc %08X %s\n", header.GetName().c_str(), header.GetCRC(),
+                                    header.GetResourceTypeName().c_str());
+                }
             }
-            catch (const std::exception& e)
-            {
-                std::printf("%-56s (%s)\n", h.GetName().c_str(), e.what());
-            }
-            ++n;
         }
-        std::printf("%d texture header(s)\n", n);
+        if (!listed)
+            std::printf("no %s resources\n", kind.c_str());
         return 0;
     }
 
@@ -430,7 +481,8 @@ namespace
                      "  pack <in.pak> <out.pkz> [level]\n  roundtrip <file>\n  strings <file> [tableName]\n"
                      "  export-strings <file> <out.tsv> [langMask]  append one language's tables as rows\n"
                      "  make-strings <out.pkz> <packageId> <packageName> <strings.txt> [--compress] [--lang MASK]\n"
-                     "  textures <file>                       list the textures (size, format, tiling)\n"
+                     "  list [kind] <file>                    the libraries and their resource counts, or the resources\n"
+                     "                                        of a kind (textures, strings, fonts, huds, geometry, audio...)\n"
                      "  texture <file> <name> <out.png|.bin>  export level 0 as PNG, or the raw descriptor + GPU bytes\n"
                      "  retexture <in> <out.pak|.pkz> <name> <in.png> [<name> <in.png>...]\n"
                      "                                        re-encode textures in place from PNGs of the same size\n"
@@ -480,7 +532,8 @@ int main(int argc, char** argv)
         if (cmd == "export-strings" && rest >= 2)
             return ExportStrings(argv[i], argv[i + 1], rest >= 3 ? static_cast<uint32_t>(std::strtoul(argv[i + 2], nullptr, 0)) : 1u);
         if (cmd == "make-strings") return MakeStrings(rest, argv + i);
-        if (cmd == "textures" && rest >= 1) return Textures(argv[i]);
+        if (cmd == "list" && rest == 1) return List(argv[i], "");
+        if (cmd == "list" && rest >= 2) return List(argv[i + 1], argv[i]);
         if (cmd == "texture" && rest >= 3) return TextureExport(argv[i], argv[i + 1], argv[i + 2]);
         if (cmd == "retexture" && rest >= 4 && rest % 2 == 0) return Retexture(argv[i], argv[i + 1], rest - 2, argv + i + 2);
         if (cmd == "font" && rest >= 1) return pkztool::Font(argv[i], rest >= 2 ? argv[i + 1] : "", gLittleEndian);
