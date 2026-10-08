@@ -22,6 +22,9 @@ from typing import Any, Iterable
 MAGIC_BUCOMPRESS = b"\xBA\xBE\xB1\xB0"
 ID_MASK = 0x00FFFFFF
 WIDE_LENGTH_FLAG = 0x80000000
+GEN_POSTLOADDATA = 0x26
+GENSUB_RESOURCE = 0x138D
+GENSUB_RESOURCEHEADER = 0x138E
 
 
 def integer(text: str) -> int:
@@ -115,6 +118,9 @@ class Layout:
     def matches(self, chunk: Chunk) -> bool:
         a = self.element.attrib
         if self.dialect == "goliath":
+            # Leaf payloads only: the packer writes an empty container where data is absent.
+            if chunk.has_children:
+                return False
             return "version" not in a or chunk.version in {integer(v) for v in a["version"].split(",")}
         checks = (
             ("version", chunk.version, lambda x, y: x == y),
@@ -271,14 +277,31 @@ class GoliathDecoder:
         self.data = package.data
         self.endian = package.endian
         self.max_records = max_records
-        # Fields of the latest decoded chunk per ID, for @0xID.field.
+        # Fields of decoded chunks for @0xID.field: the latest per chunk ID, and per (resource, chunk ID).
         self.latest: dict[int, dict[str, Any]] = {}
+        self.by_resource: dict[tuple[int, int], dict[str, Any]] = {}
+        self.resource: int | None = None
+
+    def resource_key(self, chunk: Chunk) -> int | None:
+        # A library resource and its Gen_PostLoadData share the name CRC in their GenSub_ResourceHeader.
+        cursor = chunk.parent
+        while cursor is not None:
+            if cursor.chunk_id in (GENSUB_RESOURCE, GEN_POSTLOADDATA):
+                header = next((k for k in cursor.children if k.chunk_id == GENSUB_RESOURCEHEADER), None)
+                if header is not None and header.payload_size >= 4:
+                    return struct.unpack_from(self.endian + "I", self.data, header.payload_offset)[0]
+            cursor = cursor.parent
+        return None
 
     def remember(self, chunk: Chunk, context: dict[str, Any]) -> None:
         self.latest[chunk.chunk_id] = context
+        resource = self.resource_key(chunk)
+        if resource is not None:
+            self.by_resource[(resource, chunk.chunk_id)] = context
 
     def decode(self, chunk: Chunk, layout: Layout,
                context: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        self.resource = self.resource_key(chunk)
         context["version"] = chunk.version
         fields, groups, _ = self._block(list(layout.element), chunk.payload_offset, chunk.end, context)
         return fields, groups
@@ -286,9 +309,14 @@ class GoliathDecoder:
     def _reference(self, name: str, context: Any) -> int:
         if "." in name:
             chunk_text, _, key = name.partition(".")
-            values = self.latest.get(integer(chunk_text))
+            chunk_id = integer(chunk_text)
+            if self.resource is not None:
+                values = self.by_resource.get((self.resource, chunk_id))
+                where = f" earlier in resource 0x{self.resource:08X}"
+            else:
+                values, where = self.latest.get(chunk_id), " earlier"
             if values is None or key not in values:
-                raise ValueError(f"@{name} needs chunk {chunk_text} decoded earlier")
+                raise ValueError(f"@{name} needs chunk {chunk_text} decoded{where}")
             value = values[key]
         elif name in context:
             value = context[name]

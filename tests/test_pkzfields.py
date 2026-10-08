@@ -84,6 +84,42 @@ class FieldDumpTests(unittest.TestCase):
         finally:
             os.unlink(path.name)
 
+    def test_eot_morph_reads_its_own_geometry(self):
+        def resource_header(crc):
+            return leaf(0x138E, 5, struct.pack(">I", crc).ljust(88, b"\0"))
+
+        def geometry(crc, morph_targets):
+            info = bytearray(64)
+            struct.pack_into(">I", info, 28, morph_targets)
+            return container(0x138D, 1, [resource_header(crc), container(0x321, 3, [leaf(0x322, 7, bytes(info))])])
+
+        block = struct.pack(">II3fI", 0, 1, 0.5, 0.25, 0.125, 0xFFFFFFFF)
+        morph = struct.pack(">II", 8, 0xFFFFFFFF) + block
+        post_load = container(0x26, 0, [resource_header(0xA), container(0x325, 3, [leaf(0x32E, 4, morph)])])
+        no_subtitles = container(0x400, 1, [])
+        path = tempfile.NamedTemporaryFile(delete=False)
+        path.write(container(1, 1, [geometry(0xA, 2), geometry(0xB, 5), post_load, no_subtitles]))
+        path.close()
+        try:
+            schemas = F.SchemaSet()
+            for schema_path in F.default_schemas("eot"):
+                schemas.load(schema_path)
+            with open(path.name, "rb") as source:
+                data = mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ)
+                package = F.Package(data)
+                decoder = F.Decoder(package, schemas, 0)
+                decoded = {}
+                for chunk in package.walk():
+                    schema, layout = schemas.layout(chunk)
+                    if layout is not None:
+                        decoded[chunk.chunk_id] = decoder.chunk(chunk, schema, layout)
+                self.assertEqual(decoded[0x32E]["fields"][0]["value"], [8, 0xFFFFFFFF])
+                self.assertEqual(F.item_errors(decoded[0x32E]), [])
+                self.assertNotIn(0x400, decoded)
+                data.close()
+        finally:
+            os.unlink(path.name)
+
     def test_goliath_schema_expressions(self):
         schema = tempfile.NamedTemporaryFile("w", suffix=".xml", delete=False)
         schema.write("""<goliathChunks endian="big">
