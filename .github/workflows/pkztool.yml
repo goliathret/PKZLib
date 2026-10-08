@@ -1,0 +1,22 @@
+name: pkztool
+
+on: [push, workflow_dispatch]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+      - run: cmake --build build --config Release --target pkztool
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkztool-${{ runner.os }}
+          path: |
+            build/pkztool
+            build/Release/pkztool.exe
