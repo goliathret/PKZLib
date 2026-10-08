@@ -10,7 +10,9 @@ BaseUtils is what powers the Goliath Engine's math, logic, and any algorithms im
 
 ## Building
 
-Header-only C++17; zlib (`contrib/zlib`) is needed for the `.pkz` container.
+Header-only C++17, except `Graphics/XenosTexture.cpp` and `BaseUtils/BUPng.cpp`, which build into the
+`pkzlib_textures` library on the `thirdparty/textures` submodules (ReXGlue, libsquish, stb). zlib (`contrib/zlib`)
+is needed for the `.pkz` container.
 
 ```
 git submodule update --init

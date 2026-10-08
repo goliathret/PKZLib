@@ -60,9 +60,9 @@ namespace selftest
         }
 
         {
-            const uint8_t block[8] = { 0x00, 0xF8, 0xE0, 0x07, 0x55, 0x55, 0x00, 0x00 };
-            uint8_t out[64];
-            XenosTexture::DecodeDXT1Block(block, out);
+            const std::vector<uint8_t> block = { 0x00, 0xF8, 0xE0, 0x07, 0x55, 0x55, 0x00, 0x00 };
+            const std::vector<uint8_t> out = XenosTexture::DecodeToRGBA8(
+                block, 4, 4, XenosTexture::D3DFormat::Decode(XenosTexture::D3DFormat::kDXT1Tiled));
             Check(out[0] == 0 && out[1] == 255 && out[2] == 0 && out[8 * 4 + 0] == 255 && out[8 * 4 + 1] == 0,
                   "DXT1 block decodes endpoint colours");
         }
@@ -85,6 +85,25 @@ namespace selftest
                 ok = t.name == "SelfTest_Tex" && t.desc.width == 8 && t.DecodeLevel0() == rgba;
             }
             Check(ok, "package builder links the texture header to its post-load data");
+        }
+
+        {
+            const uint32_t W = 8, H = 8;
+            std::vector<uint8_t> rgba(W * H * 4);
+            for (uint32_t i = 0; i < W * H; ++i)
+            {
+                const bool red = (i % W + i / W) % 2 == 0;
+                rgba[i * 4 + 0] = red ? 255 : 0;
+                rgba[i * 4 + 1] = 0;
+                rgba[i * 4 + 2] = red ? 0 : 255;
+                rgba[i * 4 + 3] = 255;
+            }
+            const XenosTexture::D3DFormat dxt1 = XenosTexture::D3DFormat::Decode(XenosTexture::D3DFormat::kDXT1Tiled);
+            Check(XenosTexture::DecodeToRGBA8(XenosTexture::EncodeRGBA8(rgba.data(), W, H, dxt5), W, H, dxt5) == rgba,
+                  "DXT5 encode/decode round-trips two exact colours");
+            rgba[3] = 0;
+            const std::vector<uint8_t> back = XenosTexture::DecodeToRGBA8(XenosTexture::EncodeRGBA8(rgba.data(), W, H, dxt1), W, H, dxt1);
+            Check(back[3] == 0 && back[7] == 255 && back[4] == 0 && back[6] == 255, "DXT1 encode keeps a transparent texel");
         }
     }
 }

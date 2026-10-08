@@ -17,12 +17,38 @@ set(ZLIB_INSTALL OFF CACHE BOOL "" FORCE)
 set(ZLIB_PREFIX OFF CACHE BOOL "" FORCE)
 add_subdirectory(contrib/zlib EXCLUDE_FROM_ALL)
 
+# Texture code on the thirdparty/textures submodules (ReXGlue, libsquish, stb), kept private to this library.
+set(PKZLIB_TEXTURES "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/textures")
+if(NOT EXISTS "${PKZLIB_TEXTURES}/rexglue/CMakeLists.txt")
+    message(FATAL_ERROR "thirdparty/textures is empty: run `git submodule update --init` in PKZLib")
+endif()
+add_subdirectory("${PKZLIB_TEXTURES}/rexglue" EXCLUDE_FROM_ALL)
+
+set(PKZLIB_SQUISH "${PKZLIB_TEXTURES}/libsquish/lib/src")
+add_library(pkzlib_textures STATIC
+    Graphics/XenosTexture.cpp
+    BaseUtils/BUPng.cpp
+    "${PKZLIB_SQUISH}/alpha.cpp"
+    "${PKZLIB_SQUISH}/clusterfit.cpp"
+    "${PKZLIB_SQUISH}/colourblock.cpp"
+    "${PKZLIB_SQUISH}/colourfit.cpp"
+    "${PKZLIB_SQUISH}/colourset.cpp"
+    "${PKZLIB_SQUISH}/maths.cpp"
+    "${PKZLIB_SQUISH}/rangefit.cpp"
+    "${PKZLIB_SQUISH}/singlecolourfit.cpp"
+    "${PKZLIB_SQUISH}/squish.cpp")
+target_include_directories(pkzlib_textures PRIVATE
+    "${PKZLIB_TEXTURES}/libsquish/lib/include"
+    "${PKZLIB_TEXTURES}/squish_export"
+    "${PKZLIB_TEXTURES}/stb")
+target_link_libraries(pkzlib_textures PRIVATE rexglue_textures)
+
 add_library(pkzlib INTERFACE)
 target_include_directories(pkzlib INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/contrib/zlib"
     "${CMAKE_CURRENT_BINARY_DIR}/contrib/zlib")   # zconf.h is generated here
-target_link_libraries(pkzlib INTERFACE zlibstatic)
+target_link_libraries(pkzlib INTERFACE zlibstatic pkzlib_textures)
 target_compile_features(pkzlib INTERFACE cxx_std_17)
 if(WIN32)
     target_compile_definitions(pkzlib INTERFACE _CRT_SECURE_NO_WARNINGS)
