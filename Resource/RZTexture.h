@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -101,7 +102,7 @@ public:
 
     static RZTexture Load(const PKPackage& pkg, const CMChunkResourceHeader& header)
     {
-        const CMChunk* post = FindRootAtOffset(pkg, header.GetDataOffset());
+        const CMChunk* post = pkg.FindRootAtOffset(header.GetDataOffset());
         if (!post || post->GetMaskedID() != Gen_PostLoadData)
             throw std::runtime_error("RZTexture: no Gen_PostLoadData at the header's data offset for " + header.GetName());
         const CMChunk* data = post->FindChild(Texture_Data);
@@ -131,23 +132,33 @@ public:
         return out;
     }
 
+    static std::optional<CMChunkResourceHeader> FindHeader(const PKPackage& pkg, uint32_t crc, uint32_t languageMask,
+                                                           uint32_t qualityLevel)
+    {
+        std::optional<CMChunkResourceHeader> found;
+        if (!crc)
+            return found;
+        pkg.ForEachChunk([&](const CMChunk& chunk) {
+            const CMChunk* h = chunk.GetMaskedID() == GenSub_Resource ? chunk.FindChild(GenSub_ResourceHeader) : nullptr;
+            if (!h)
+                return;
+            CMChunkResourceHeader header(*h);
+            if (header.GetResourceType() != kCMResourceType_Texture || header.GetCRC() != crc)
+                return;
+            if (!found || (header.GetLanguageMask() == languageMask && header.GetQualityLevel() == qualityLevel))
+                found = std::move(header);
+        });
+        return found;
+    }
+
     static const CMChunk* FindRootAtOffset(const PKPackage& pkg, uint64_t fileOffset)
     {
-        for (const CMChunk& root : pkg.rootChunks)
-        {
-            if (root.offset == fileOffset)
-                return &root;
-            if (root.GetMaskedID() == Root)
-                for (const CMChunk& child : root.children)
-                    if (child.offset == fileOffset)
-                        return &child;
-        }
-        return nullptr;
+        return pkg.FindRootAtOffset(fileOffset);
     }
 
     static CMChunk* FindRootAtOffset(PKPackage& pkg, uint64_t fileOffset)
     {
-        return const_cast<CMChunk*>(FindRootAtOffset(static_cast<const PKPackage&>(pkg), fileOffset));
+        return pkg.FindRootAtOffset(fileOffset);
     }
 
     std::vector<uint8_t> DecodeLevel0() const
@@ -356,7 +367,7 @@ public:
         CMChunk* libraryHeader = FindLibraryHeader(pkg, nameCRC);
         if (!libraryHeader)
             throw std::runtime_error("RZTexture: no texture header for " + name);
-        CMChunk* post = FindRootAtOffset(pkg, CMChunkResourceHeader(*libraryHeader).GetDataOffset());
+        CMChunk* post = pkg.FindRootAtOffset(CMChunkResourceHeader(*libraryHeader).GetDataOffset());
         CMChunk* data = post ? post->FindChild(Texture_Data) : nullptr;
         if (!data)
             throw std::runtime_error("RZTexture: no Texture_Data for " + name);

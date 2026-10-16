@@ -124,6 +124,34 @@ public:
         return nullptr;
     }
 
+    template<typename Predicate>
+    const CMChunk* FindDescendantIf(Predicate&& matches) const
+    {
+        for (const auto& child : children)
+        {
+            if (matches(child))
+                return &child;
+            if (const CMChunk* found = child.FindDescendantIf(matches))
+                return found;
+        }
+        return nullptr;
+    }
+
+    const CMChunk* FindDescendant(uint32_t searchID) const
+    {
+        return FindDescendantIf([searchID](const CMChunk& chunk) { return chunk.GetMaskedID() == (searchID & kIdMask); });
+    }
+
+    template<typename Visitor>
+    void ForEachDescendant(Visitor&& visit) const
+    {
+        for (const auto& child : children)
+        {
+            visit(child);
+            child.ForEachDescendant(visit);
+        }
+    }
+
     const std::vector<CMChunk>& GetChildren() const { return children; }
 
     void SetData(const std::vector<uint8_t>& newData)

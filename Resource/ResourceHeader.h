@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
 #include "../Package/CMChunk.h"
+#include "../Package/PKPackage.h"
 #include "ResourceTypes.h"
 
 class CMChunkResourceHeader : public CMChunk
@@ -77,7 +79,33 @@ public:
         return std::string(zName, strnlen(zName, sizeof(zName)));
     }
 
+    bool IsSameResource(const CMChunkResourceHeader& other) const
+    {
+        return uiCRC == other.uiCRC && uiResourceType == other.uiResourceType && uiLanguageMask == other.uiLanguageMask &&
+               uiQualityLevel == other.uiQualityLevel && uiDataOffset == other.uiDataOffset && GetName() == other.GetName();
+    }
+
+    static std::optional<CMChunkResourceHeader> FindOwner(const PKPackage& pkg, const CMChunk& chunk)
+    {
+        for (const CMChunk& root : pkg.rootChunks)
+            if (const CMChunk* header = FindOwnerHeader(root, chunk, nullptr))
+                return CMChunkResourceHeader(*header);
+        return std::nullopt;
+    }
+
 private:
+    static const CMChunk* FindOwnerHeader(const CMChunk& node, const CMChunk& target, const CMChunk* header)
+    {
+        if (node.GetMaskedID() == GenSub_Resource || node.GetMaskedID() == Gen_PostLoadData)
+            header = node.FindChild(GenSub_ResourceHeader);
+        if (&node == &target)
+            return header;
+        for (const CMChunk& child : node.children)
+            if (const CMChunk* found = FindOwnerHeader(child, target, header))
+                return found;
+        return nullptr;
+    }
+
     void Parse()
     {
         if (data.size() == kSize64)

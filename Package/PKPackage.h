@@ -86,6 +86,22 @@ public:
         }
     }
 
+    void ReadFromMemoryAutoEndian(const std::vector<uint8_t>& bytes)
+    {
+        isLittleEndian = false;
+        try
+        {
+            ReadFromMemory(bytes);
+            if (!rootChunks.empty() && rootChunks.front().GetMaskedID() != 0)
+                return;
+        }
+        catch (const std::exception&)
+        {
+        }
+        isLittleEndian = true;
+        ReadFromMemory(bytes);
+    }
+
     std::vector<uint8_t> Serialize() const
     {
         std::ostringstream out(std::ios::binary);
@@ -109,6 +125,67 @@ public:
         if (!file)
             throw std::runtime_error("Failed writing package file: " + filePath);
         file.close();
+    }
+
+    BUCompress::Options ContainerOptions() const
+    {
+        BUCompress::Options options;
+        if (compressHeader.uiSectorSize)
+            options.sectorSize = compressHeader.uiSectorSize;
+        return options;
+    }
+
+    void ComputeLengths()
+    {
+        for (auto& root : rootChunks)
+            root.ComputeLength();
+    }
+
+    const CMChunk* FindRootAtOffset(uint64_t fileOffset) const
+    {
+        for (const auto& root : rootChunks)
+        {
+            if (root.offset == fileOffset)
+                return &root;
+            if (root.GetMaskedID() == Root)
+                for (const auto& child : root.children)
+                    if (child.offset == fileOffset)
+                        return &child;
+        }
+        return nullptr;
+    }
+
+    CMChunk* FindRootAtOffset(uint64_t fileOffset)
+    {
+        return const_cast<CMChunk*>(static_cast<const PKPackage&>(*this).FindRootAtOffset(fileOffset));
+    }
+
+    template<typename Predicate>
+    const CMChunk* FindChunkIf(Predicate&& matches) const
+    {
+        for (const auto& root : rootChunks)
+        {
+            if (matches(root))
+                return &root;
+            if (const CMChunk* found = root.FindDescendantIf(matches))
+                return found;
+        }
+        return nullptr;
+    }
+
+    const CMChunk* FindChunk(uint32_t type) const
+    {
+        return FindChunkIf([type](const CMChunk& chunk) { return chunk.GetMaskedID() == (type & CMChunk::kIdMask); });
+    }
+
+    template<typename Visitor>
+    void ForEachChunk(Visitor&& visit) const
+    {
+        for (const auto& root : rootChunks)
+        {
+            visit(root);
+            root.ForEachDescendant(visit);
+        }
     }
 
     CMChunk* FindRoot(uint32_t type)

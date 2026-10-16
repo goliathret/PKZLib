@@ -29,7 +29,9 @@
 #include "../Package/PKChunkBuilders.h"
 #include "../Package/PKPackage.h"
 #include "../Resource/RZAnimMap.h"
+#include "../Resource/RZAudioSample.h"
 #include "../Resource/RZCutscene.h"
+#include "../Resource/RZGeometry.h"
 #include "../Resource/RZHAnim.h"
 #include "../Resource/RZHierarchy.h"
 #include "../Resource/RZResource.h"
@@ -38,6 +40,7 @@
 #include "../Resource/ResourceTypes.h"
 #include "../Resource/RZFont.h"
 #include "../Resource/RZHud.h"
+#include "selftest_resources.h"
 #include "selftest_textures.h"
 
 namespace
@@ -255,6 +258,7 @@ int main()
         TestMatrix();
         TestGeomPrim();
         selftest::TestTextures(&Check);
+        selftest::TestResources(&Check);
     }
     catch (const std::exception& e)
     {
