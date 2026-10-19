@@ -139,9 +139,62 @@ namespace XenosTexture
         return out;
     }
 
+    namespace
+    {
+        template<typename Visit>
+        void VolumeBlocks(uint32_t width, uint32_t height, uint32_t depth, const D3DFormat& format, Visit visit)
+        {
+            if (!width || !height || !depth || format.BlockDim() != 1 || format.BytesPerBlock() != 4)
+                throw std::runtime_error("XenosTexture: volume decoding currently requires 32-bit pixels");
+            const auto pitch = AlignUp(width, 32), rows = AlignUp(height, 32);
+            for (uint32_t z = 0; z < depth; ++z)
+                for (uint32_t y = 0; y < height; ++y)
+                    for (uint32_t x = 0; x < width; ++x)
+                    {
+                        const size_t surface = format.tiled ?
+                            size_t(texture_util::GetTiledOffset3D(x, y, z, pitch, rows, 2)) :
+                            ((size_t(z) * rows + y) * pitch + x) * 4;
+                        visit(((size_t(z) * height + y) * width + x) * 4, surface);
+                    }
+        }
+    }
+
+    std::vector<uint8_t> UntileVolume(const uint8_t* data, size_t size, uint32_t width, uint32_t height,
+                                       uint32_t depth, const D3DFormat& format)
+    {
+        if (!width || !height || !depth || width > 16384 || height > 16384 || depth > 2048 ||
+            size_t(width) * height * depth * 4 > size)
+            throw std::runtime_error("XenosTexture: invalid or truncated volume");
+        std::vector<uint8_t> linear(size_t(width) * height * depth * 4);
+        VolumeBlocks(width, height, depth, format, [&](size_t destination, size_t source) {
+            if (source > size || size - source < 4)
+                throw std::runtime_error("XenosTexture: volume data is truncated");
+            std::memcpy(linear.data() + destination, data + source, 4);
+            SwapEndian(linear.data() + destination, 4, format.endian);
+        });
+        return linear;
+    }
+
+    std::vector<uint8_t> TileVolume(const std::vector<uint8_t>& linear, uint32_t width, uint32_t height,
+                                     uint32_t depth, const D3DFormat& format)
+    {
+        if (linear.size() != size_t(width) * height * depth * 4)
+            throw std::runtime_error("XenosTexture: wrong volume pixel count");
+        std::vector<uint8_t> tiled(size_t(AlignUp(width, 32)) * AlignUp(height, 32) * AlignUp(depth, 4) * 4);
+        VolumeBlocks(width, height, depth, format, [&](size_t source, size_t destination) {
+            if (destination > tiled.size() || tiled.size() - destination < 4)
+                throw std::runtime_error("XenosTexture: volume layout exceeds its allocation");
+            std::memcpy(tiled.data() + destination, linear.data() + source, 4);
+            SwapEndian(tiled.data() + destination, 4, format.endian);
+        });
+        return tiled;
+    }
+
     std::vector<uint8_t> DecodeToRGBA8(const std::vector<uint8_t>& linear, uint32_t width, uint32_t height,
                                        const D3DFormat& f)
     {
+        if (linear.size() < LinearSize(width, height, f))
+            throw std::runtime_error("XenosTexture: pixel data is truncated");
         std::vector<uint8_t> out(size_t(width) * height * 4, 0);
         if (const int flags = SquishFlags(f))
         {
@@ -155,10 +208,13 @@ namespace XenosTexture
             for (size_t i = 0; i < size_t(width) * height; ++i)
             {
                 const uint8_t* p = linear.data() + i * 4;
-                out[i * 4 + 0] = p[2];
-                out[i * 4 + 1] = p[1];
-                out[i * 4 + 2] = p[0];
-                out[i * 4 + 3] = p[3];
+                const uint8_t components[] = {p[0], p[1], p[2], p[3], 0, 255};
+                for (int channel = 0; channel < 4; ++channel)
+                {
+                    if (f.swizzle[channel] > 5)
+                        throw std::runtime_error("XenosTexture: invalid color swizzle");
+                    out[i * 4 + channel] = components[f.swizzle[channel]];
+                }
             }
             return out;
         }
@@ -183,7 +239,14 @@ namespace XenosTexture
             return out;
         }
         if (f.format == kFormat_8_8_8_8)
-            return EncodeRGBA8To8888(rgba, width, height);
+        {
+            std::vector<uint8_t> out(size_t(width) * height * 4, 255);
+            for (size_t i = 0; i < size_t(width) * height; ++i)
+                for (int channel = 0; channel < 4; ++channel)
+                    if (f.swizzle[channel] < 4)
+                        out[i * 4 + f.swizzle[channel]] = rgba[i * 4 + channel];
+            return out;
+        }
         if (f.format == kFormat_8)
         {
             std::vector<uint8_t> out(size_t(width) * height);

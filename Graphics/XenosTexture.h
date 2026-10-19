@@ -75,5 +75,9 @@ namespace XenosTexture
     std::vector<uint8_t> DecodeToRGBA8(const std::vector<uint8_t>& linear, uint32_t width, uint32_t height,
                                        const D3DFormat& f);
     std::vector<uint8_t> EncodeRGBA8(const uint8_t* rgba, uint32_t width, uint32_t height, const D3DFormat& f);
+    std::vector<uint8_t> UntileVolume(const uint8_t* data, size_t size, uint32_t width, uint32_t height,
+                                       uint32_t depth, const D3DFormat& format);
+    std::vector<uint8_t> TileVolume(const std::vector<uint8_t>& linear, uint32_t width, uint32_t height,
+                                     uint32_t depth, const D3DFormat& format);
     std::vector<uint8_t> EncodeRGBA8To8888(const uint8_t* rgba, uint32_t width, uint32_t height);
 }
