@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(PKZLib LANGUAGES C CXX)
 
-# PKZLib is header-only; this file builds zlib for it, a tool and a self-test.
+# Package resources are header-only except texture and animation processing.
 option(PKZLIB_BUILD_TOOLS "Build the pkztool command-line utility" ON)
 option(PKZLIB_BUILD_TESTS "Build the header compile / round-trip self-test" ON)
 
@@ -43,12 +43,21 @@ target_include_directories(pkzlib_textures PRIVATE
     "${PKZLIB_TEXTURES}/stb")
 target_link_libraries(pkzlib_textures PRIVATE rexglue_textures)
 
+add_library(pkzlib_animation STATIC
+    Resource/AnimationTypes.cpp
+    Resource/RZHierarchy.cpp
+    Resource/RZHAnim.cpp
+    Resource/RZGeometrySkin.cpp)
+target_include_directories(pkzlib_animation PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(pkzlib_animation PUBLIC cxx_std_17)
+target_link_libraries(pkzlib_animation PRIVATE zlibstatic)
+
 add_library(pkzlib INTERFACE)
 target_include_directories(pkzlib INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/contrib/zlib"
     "${CMAKE_CURRENT_BINARY_DIR}/contrib/zlib")   # zconf.h is generated here
-target_link_libraries(pkzlib INTERFACE zlibstatic pkzlib_textures)
+target_link_libraries(pkzlib INTERFACE zlibstatic pkzlib_textures pkzlib_animation)
 target_compile_features(pkzlib INTERFACE cxx_std_17)
 if(WIN32)
     target_compile_definitions(pkzlib INTERFACE _CRT_SECURE_NO_WARNINGS)
@@ -64,6 +73,10 @@ if(PKZLIB_BUILD_TESTS)
     add_executable(pkzlib_selftest tests/selftest.cpp)
     target_link_libraries(pkzlib_selftest PRIVATE pkzlib)
     add_test(NAME pkzlib_selftest COMMAND pkzlib_selftest)
+
+    add_executable(pkzlib_animation_test tests/animation_test.cpp)
+    target_link_libraries(pkzlib_animation_test PRIVATE pkzlib)
+    add_test(NAME pkzlib_animation COMMAND pkzlib_animation_test)
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)

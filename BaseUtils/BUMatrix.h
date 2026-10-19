@@ -42,6 +42,19 @@ public:
                 m[r][c] = (r == c) ? 1.0f : 0.0f;
     }
 
+    BUMatrix operator*(const BUMatrix& other) const
+    {
+        BUMatrix result;
+        for (int column = 0; column < 4; ++column)
+            for (int row = 0; row < 4; ++row)
+            {
+                result.m[column][row] = 0;
+                for (int k = 0; k < 4; ++k)
+                    result.m[column][row] += m[k][row] * other.m[column][k];
+            }
+        return result;
+    }
+
     static BUMatrix FromQuat(const BUQuaternion& q)
     {
         const float xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
