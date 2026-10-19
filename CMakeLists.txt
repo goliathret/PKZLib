@@ -28,6 +28,7 @@ set(PKZLIB_SQUISH "${PKZLIB_TEXTURES}/libsquish/lib/src")
 add_library(pkzlib_textures STATIC
     Graphics/XenosTexture.cpp
     BaseUtils/BUPng.cpp
+    Resource/RZTexture.cpp
     "${PKZLIB_SQUISH}/alpha.cpp"
     "${PKZLIB_SQUISH}/clusterfit.cpp"
     "${PKZLIB_SQUISH}/colourblock.cpp"
@@ -41,7 +42,7 @@ target_include_directories(pkzlib_textures PRIVATE
     "${PKZLIB_TEXTURES}/libsquish/lib/include"
     "${PKZLIB_TEXTURES}/squish_export"
     "${PKZLIB_TEXTURES}/stb")
-target_link_libraries(pkzlib_textures PRIVATE rexglue_textures)
+target_link_libraries(pkzlib_textures PRIVATE rexglue_textures zlibstatic)
 
 add_library(pkzlib_animation STATIC
     Resource/AnimationTypes.cpp
@@ -77,6 +78,10 @@ if(PKZLIB_BUILD_TESTS)
     add_executable(pkzlib_animation_test tests/animation_test.cpp)
     target_link_libraries(pkzlib_animation_test PRIVATE pkzlib)
     add_test(NAME pkzlib_animation COMMAND pkzlib_animation_test)
+
+    add_executable(pkzlib_texture_io_test tests/texture_io_test.cpp)
+    target_link_libraries(pkzlib_texture_io_test PRIVATE pkzlib)
+    add_test(NAME pkzlib_texture_io COMMAND pkzlib_texture_io_test)
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)

@@ -318,7 +318,7 @@ namespace
             std::printf("%-56s %5ux%-5u mips %u %-10s %s%s d3dfmt %08X data %zu dim %u depth %u mipchain %08X min %08X\n",
                         t.name.c_str(), t.desc.width, t.desc.height, t.desc.mipLevels, f.Name(),
                         f.tiled ? "tiled" : "linear", t.desc.Is2D() ? "" : " (not 2D)", t.desc.d3dFormat,
-                        t.gpuData.size(), t.desc.dimension, t.desc.depth, t.desc.mipChainOffset, t.desc.minLevelSize);
+                        t.gpuData.size(), t.desc.kind, t.desc.depth, t.desc.mipChainOffset, t.desc.minLevelSize);
         }
         catch (const std::exception& e)
         {

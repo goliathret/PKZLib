@@ -20,7 +20,10 @@ class RZTexture
 public:
     struct Descriptor
     {
-        uint32_t dimension = 1;
+        uint32_t kind = 0;
+        uint32_t flags = 1;
+        float lightmapScale[3] = {1, 1, 1};
+        uint32_t headerUnknown = 0;
         float normalScale = 1.0f;
         uint32_t width = 0, height = 0;
         uint32_t mipLevels = 1;
@@ -37,61 +40,89 @@ public:
 
         static Descriptor Parse(const CMChunk& textureData)
         {
-            if (textureData.GetMaskedID() != Texture_Data || textureData.data.size() < kSize)
+            if (textureData.GetMaskedID() != Texture_Data || textureData.data.size() < 8)
                 throw std::runtime_error("RZTexture: not a Texture_Data chunk");
             size_t off = 0;
             Descriptor d;
-            const uint32_t f0 = textureData.Read<uint32_t>(off);
-            (void)f0;
-            d.dimension = textureData.Read<uint32_t>(off);
-            if (d.dimension == kNormalMap)
-            {
-                if (textureData.data.size() < kSize + 4)
-                    throw std::runtime_error("RZTexture: short normal-map Texture_Data chunk");
+            d.kind = textureData.Read<uint32_t>(off);
+            d.flags = textureData.Read<uint32_t>(off);
+            if (d.flags & 2)
+                for (float& scale : d.lightmapScale)
+                    scale = textureData.Read<float>(off);
+            if (d.flags & 4)
                 d.normalScale = textureData.Read<float>(off);
-            }
+            if (d.kind > 2 || textureData.data.size() < d.Size())
+                throw std::runtime_error("RZTexture: invalid texture kind or truncated descriptor");
             d.width = textureData.Read<uint32_t>(off);
-            d.height = textureData.Read<uint32_t>(off);
+            d.height = d.kind == 1 ? d.width : textureData.Read<uint32_t>(off);
+            if (d.kind == 2)
+                d.depth = textureData.Read<uint32_t>(off);
             d.mipLevels = textureData.Read<uint32_t>(off);
-            d.depth = textureData.Read<uint32_t>(off);
+            d.headerUnknown = textureData.Read<uint32_t>(off);
             d.d3dFormat = textureData.Read<uint32_t>(off);
             d.stream0 = textureData.Read<uint32_t>(off);
             d.stream1 = textureData.Read<uint32_t>(off);
             d.stream2 = textureData.Read<uint32_t>(off);
             d.f10 = textureData.Read<uint32_t>(off);
-            d.f11 = textureData.Read<uint32_t>(off);
-            d.mipChainOffset = textureData.Read<uint32_t>(off);
-            d.f13 = textureData.Read<uint32_t>(off);
-            d.minLevelSize = textureData.Read<uint32_t>(off);
+            if (d.kind != 2)
+            {
+                d.f11 = textureData.Read<uint32_t>(off);
+                d.mipChainOffset = textureData.Read<uint32_t>(off);
+                if (d.kind == 0)
+                    d.f13 = textureData.Read<uint32_t>(off);
+                d.minLevelSize = textureData.Read<uint32_t>(off);
+            }
+            uint32_t maxMips = 1;
+            for (auto size = std::max({d.width, d.height, d.depth}); size > 1; size >>= 1)
+                ++maxMips;
+            if (!d.width || !d.height || d.width > 16384 || d.height > 16384 || d.depth > 2048 ||
+                (d.kind == 2 && !d.depth) || d.mipLevels > maxMips)
+                throw std::runtime_error("RZTexture: invalid texture dimensions or mip count");
             return d;
         }
 
         void Write(CMChunk& textureData) const
         {
-            textureData.Append<uint32_t>(0);
-            textureData.Append<uint32_t>(dimension);
-            if (dimension == kNormalMap)
-                textureData.Append<float>(normalScale);
-            textureData.Append<uint32_t>(width);
-            textureData.Append<uint32_t>(height);
-            textureData.Append<uint32_t>(mipLevels);
-            textureData.Append<uint32_t>(depth);
-            textureData.Append<uint32_t>(d3dFormat);
-            textureData.Append<uint32_t>(stream0);
-            textureData.Append<uint32_t>(stream1);
-            textureData.Append<uint32_t>(stream2);
-            textureData.Append<uint32_t>(f10);
-            textureData.Append<uint32_t>(f11);
-            textureData.Append<uint32_t>(mipChainOffset);
-            textureData.Append<uint32_t>(f13);
-            textureData.Append<uint32_t>(minLevelSize);
+            textureData.Append<uint32_t>(kind);
+            textureData.Append<uint32_t>(flags);
+            if (flags & 2)
+                for (float scale : lightmapScale)
+                    textureData.Append(scale);
+            if (flags & 4)
+                textureData.Append(normalScale);
+            textureData.Append(width);
+            if (kind != 1)
+                textureData.Append(height);
+            if (kind == 2)
+                textureData.Append(depth);
+            textureData.Append(mipLevels);
+            textureData.Append(headerUnknown);
+            textureData.Append(d3dFormat);
+            textureData.Append(stream0);
+            textureData.Append(stream1);
+            textureData.Append(stream2);
+            textureData.Append(f10);
+            if (kind != 2)
+            {
+                textureData.Append(f11);
+                textureData.Append(mipChainOffset);
+                if (kind == 0)
+                    textureData.Append(f13);
+                textureData.Append(minLevelSize);
+            }
         }
 
         XenosTexture::D3DFormat Format() const { return XenosTexture::D3DFormat::Decode(d3dFormat); }
 
-        bool Is2D() const { return (dimension <= 1 || dimension == kNormalMap) && depth == 0; }
+        bool Is2D() const { return kind == 0; }
+        bool IsVolume() const { return kind == 2; }
+        uint32_t PreviewWidth() const { return width * (IsVolume() ? depth : 1); }
 
-        size_t Size() const { return kSize + (dimension == kNormalMap ? 4 : 0); }
+        size_t Size() const
+        {
+            return 8 + (flags & 2 ? 12 : 0) + (flags & 4 ? 4 : 0) +
+                (kind == 0 ? 52 : kind == 1 ? 44 : 40);
+        }
     };
 
     std::string name;
@@ -161,13 +192,8 @@ public:
         return pkg.FindRootAtOffset(fileOffset);
     }
 
-    std::vector<uint8_t> DecodeLevel0() const
-    {
-        if (!desc.Is2D())
-            throw std::runtime_error("RZTexture: only 2D textures are decoded (" + name + ")");
-        const std::vector<BUDds::Level> levels = Levels(1);
-        return XenosTexture::DecodeToRGBA8(levels[0].data, levels[0].width, levels[0].height, desc.Format());
-    }
+    uint32_t PreviewWidth() const { return desc.PreviewWidth(); }
+    std::vector<uint8_t> DecodeLevel0() const;
 
     static RZTexture FromRGBA8(const std::string& name, const uint8_t* rgba, uint32_t width, uint32_t height,
                                uint32_t d3dFormat = XenosTexture::D3DFormat::kA8R8G8B8Tiled)
@@ -180,7 +206,7 @@ public:
         t.desc.d3dFormat = d3dFormat;
         if (t.desc.Format().format != XenosTexture::kFormat_8_8_8_8)
             throw std::runtime_error("RZTexture::FromRGBA8 writes 8_8_8_8 only");
-        t.SetLevels({ BUDds::Level{ width, height, XenosTexture::EncodeRGBA8To8888(rgba, width, height) } });
+        t.SetLevels({ BUDds::Level{ width, height, XenosTexture::EncodeRGBA8(rgba, width, height, t.desc.Format()) } });
 
         const size_t padded = (t.gpuData.size() + 0x3FFF) & ~size_t(0x3FFF);
         t.gpuData.resize(padded, 0);
@@ -211,7 +237,7 @@ public:
         RZTexture t;
         t.name = name;
         t.nameCRC = BUCRC().Generate(name);
-        t.desc.dimension = color == DdsColor::NormalMap ? Descriptor::kNormalMap : 1;
+        t.desc.flags = color == DdsColor::NormalMap ? Descriptor::kNormalMap : 1;
         t.desc.normalScale = scale;
         t.desc.width = img.width;
         t.desc.height = img.height;
@@ -227,10 +253,28 @@ public:
     // Lays linear mip levels out as retail does and sets the descriptor's mip fields to match.
     void SetLevels(const std::vector<BUDds::Level>& levels)
     {
+        if (desc.IsVolume())
+        {
+            SetVolumeLevel(levels);
+            return;
+        }
+        if (!desc.Is2D())
+            throw std::runtime_error("RZTexture: cubemap layout is not supported");
         if (levels.empty())
             throw std::runtime_error("RZTexture: no mip levels for " + name);
         const XenosTexture::D3DFormat f = desc.Format();
         const uint32_t mips = static_cast<uint32_t>(levels.size());
+        if (!desc.width || !desc.height || mips > 15)
+            throw std::runtime_error("RZTexture: invalid mip chain");
+        for (size_t i = 0; i < levels.size(); ++i)
+        {
+            const auto& level = levels[i];
+            const auto width = std::max(1u, desc.width >> i), height = std::max(1u, desc.height >> i);
+            const auto bd = f.BlockDim();
+            if (!bd || level.width != width || level.height != height || level.depth != 1 ||
+                level.data.size() != size_t((width + bd - 1) / bd) * ((height + bd - 1) / bd) * f.BytesPerBlock())
+                throw std::runtime_error("RZTexture: invalid mip dimensions or byte count");
+        }
         const uint32_t tailLevels = mips > 2 ? mips - 2 : 1;
         const uint32_t tailFirst = mips - tailLevels;
         const uint32_t packedLevel = XenosTexture::PackedMipLevel(desc.width, desc.height);
@@ -287,6 +331,10 @@ public:
     // The inverse of SetLevels: the first count mip levels as linear blocks.
     std::vector<BUDds::Level> Levels(uint32_t count = UINT32_MAX) const
     {
+        if (desc.IsVolume())
+            return count ? VolumeLevels() : std::vector<BUDds::Level>{};
+        if (!desc.Is2D())
+            throw std::runtime_error("RZTexture: cubemap layout is not supported");
         const XenosTexture::D3DFormat f = desc.Format();
         const uint32_t mips = std::max(1u, desc.mipLevels);
         const uint32_t wanted = std::min(mips, count);
@@ -330,6 +378,11 @@ public:
     // Re-encodes from an RGBA8 image in the texture's own size, format and mip count, so the data keeps its layout.
     void Reencode(const uint8_t* rgba, uint32_t width, uint32_t height)
     {
+        if (desc.IsVolume())
+        {
+            ReencodeVolume(rgba, width, height);
+            return;
+        }
         if (width != desc.width || height != desc.height)
             throw std::runtime_error("RZTexture: " + name + " is " + std::to_string(desc.width) + "x" +
                                      std::to_string(desc.height) + ", the image is " + std::to_string(width) + "x" +
@@ -351,14 +404,7 @@ public:
                 height = std::max(1u, height / 2);
             }
         }
-        const Descriptor before = desc;
-        const size_t oldSize = gpuData.size();
-        SetLevels(levels);
-        if (gpuData.size() > oldSize || desc.mipChainOffset != before.mipChainOffset || desc.f13 != before.f13 ||
-            desc.minLevelSize != before.minLevelSize)
-            throw std::runtime_error("RZTexture: " + name + " does not lay out like the original");
-        gpuData.resize(oldSize, 0);
-        desc = before;
+        ReplaceLevels(levels);
     }
 
     // Writes gpuData over this texture's data in pkg (it must keep its size) and updates both post-load CRCs.
@@ -430,6 +476,11 @@ public:
     }
 
 private:
+    std::vector<BUDds::Level> VolumeLevels() const;
+    void SetVolumeLevel(const std::vector<BUDds::Level>& levels);
+    void ReencodeVolume(const uint8_t* rgba, uint32_t width, uint32_t height);
+    void ReplaceLevels(const std::vector<BUDds::Level>& levels);
+
     static CMChunk* FindLibraryHeader(PKPackage& pkg, uint32_t nameCRC)
     {
         for (CMChunk& root : pkg.rootChunks)

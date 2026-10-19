@@ -13,6 +13,7 @@ namespace BUDds
         uint32_t width = 0;
         uint32_t height = 0;
         std::vector<uint8_t> data;
+        uint32_t depth = 1;
     };
 
     struct Image
