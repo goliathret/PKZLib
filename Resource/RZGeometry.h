@@ -112,6 +112,7 @@ public:
     }
 
 private:
+    friend class RZEnvironment;
     using VertexElement = CMChunkMaterialInfo::VertexElement;
 
     struct MeshDescriptor

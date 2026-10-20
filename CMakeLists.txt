@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(PKZLib LANGUAGES C CXX)
 
-# Package resources are header-only except texture and animation processing.
+# Resource processing stays in the library; consumers do not need rendering dependencies.
 option(PKZLIB_BUILD_TOOLS "Build the pkztool command-line utility" ON)
 option(PKZLIB_BUILD_TESTS "Build the header compile / round-trip self-test" ON)
 
@@ -54,12 +54,18 @@ target_include_directories(pkzlib_animation PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_features(pkzlib_animation PUBLIC cxx_std_17)
 target_link_libraries(pkzlib_animation PRIVATE zlibstatic)
 
+add_library(pkzlib_resources STATIC
+    Resource/RZEnvironment.cpp)
+target_include_directories(pkzlib_resources PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(pkzlib_resources PUBLIC cxx_std_17)
+target_link_libraries(pkzlib_resources PRIVATE zlibstatic)
+
 add_library(pkzlib INTERFACE)
 target_include_directories(pkzlib INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/contrib/zlib"
     "${CMAKE_CURRENT_BINARY_DIR}/contrib/zlib")   # zconf.h is generated here
-target_link_libraries(pkzlib INTERFACE zlibstatic pkzlib_textures pkzlib_animation)
+target_link_libraries(pkzlib INTERFACE zlibstatic pkzlib_textures pkzlib_animation pkzlib_resources)
 target_compile_features(pkzlib INTERFACE cxx_std_17)
 if(WIN32)
     target_compile_definitions(pkzlib INTERFACE _CRT_SECURE_NO_WARNINGS)
@@ -83,6 +89,10 @@ if(PKZLIB_BUILD_TESTS)
     add_executable(pkzlib_texture_io_test tests/texture_io_test.cpp)
     target_link_libraries(pkzlib_texture_io_test PRIVATE pkzlib)
     add_test(NAME pkzlib_texture_io COMMAND pkzlib_texture_io_test)
+
+    add_executable(pkzlib_environment_test tests/environment_test.cpp)
+    target_link_libraries(pkzlib_environment_test PRIVATE pkzlib)
+    add_test(NAME pkzlib_environment COMMAND pkzlib_environment_test)
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)

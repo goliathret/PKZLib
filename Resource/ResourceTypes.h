@@ -47,7 +47,8 @@
     X(kCMResourceType_AudioBankCutscene, 38) \
     X(kCMResourceType_Sequence, 39) \
     X(kCMResourceType_BaseCount, 40) \
-    X(kCMResourceType_TotalCount, 41)
+    X(kCMResourceType_TotalCount, 41) \
+    X(kCMResourceType_Environment, 0x86)
 
 enum CMResourceType : uint32_t
 {
