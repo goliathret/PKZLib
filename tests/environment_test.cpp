@@ -1,5 +1,6 @@
 #include "../Resource/RZEnvironment.h"
 #include "../Resource/RZTexture.h"
+#include "../Resource/TextureUsage.h"
 #include <cstdio>
 
 namespace
@@ -159,6 +160,24 @@ namespace
               "Truncated object mesh accepted");
     }
 
+    void ReferenceTests()
+    {
+        auto package = Fixture();
+        TextureUsageIndex index;
+        index.Build(&package);
+        Check(index.Warnings().empty(), "Valid material references generated warnings");
+        const auto diffuse = index.Find(Header(package, 1));
+        const auto specular = index.Find(Header(package, 2));
+        Check(diffuse.size() == 3 && specular.size() == 3,
+              "Baked/object or secondary sampler references missing");
+        Check(diffuse[0].resource == &package.rootChunks[0].children[0] && diffuse[0].environmentPart == 1 &&
+                  diffuse[0].baseColor && diffuse[0].samplers == std::vector<size_t>{0} &&
+                  !specular[0].baseColor && specular[0].samplers == std::vector<size_t>{1},
+              "Material links lost their target, part or sampler roles");
+        Check(index.Find(Header(package, 3)).empty(), "Texture links crossed language/quality variants");
+        index.Build(nullptr);
+        Check(index.Find(Header(package, 1)).empty(), "Unloaded package retained reference pointers");
+    }
 } // namespace
 
 int main()
@@ -166,11 +185,12 @@ int main()
     try
     {
         DecodeTests();
+        ReferenceTests();
     }
     catch (const std::exception& error)
     {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
-    std::puts("PASS: baked environment groups, object buffers, truncation");
+    std::puts("PASS: baked environment groups, object buffers, truncation and material texture links");
 }
