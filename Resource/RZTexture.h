@@ -38,79 +38,8 @@ public:
         static constexpr size_t kSize = 60;
         static constexpr uint32_t kNormalMap = 5;
 
-        static Descriptor Parse(const CMChunk& textureData)
-        {
-            if (textureData.GetMaskedID() != Texture_Data || textureData.data.size() < 8)
-                throw std::runtime_error("RZTexture: not a Texture_Data chunk");
-            size_t off = 0;
-            Descriptor d;
-            d.kind = textureData.Read<uint32_t>(off);
-            d.flags = textureData.Read<uint32_t>(off);
-            if (d.flags & 2)
-                for (float& scale : d.lightmapScale)
-                    scale = textureData.Read<float>(off);
-            if (d.flags & 4)
-                d.normalScale = textureData.Read<float>(off);
-            if (d.kind > 2 || textureData.data.size() < d.Size())
-                throw std::runtime_error("RZTexture: invalid texture kind or truncated descriptor");
-            d.width = textureData.Read<uint32_t>(off);
-            d.height = d.kind == 1 ? d.width : textureData.Read<uint32_t>(off);
-            if (d.kind == 2)
-                d.depth = textureData.Read<uint32_t>(off);
-            d.mipLevels = textureData.Read<uint32_t>(off);
-            d.headerUnknown = textureData.Read<uint32_t>(off);
-            d.d3dFormat = textureData.Read<uint32_t>(off);
-            d.stream0 = textureData.Read<uint32_t>(off);
-            d.stream1 = textureData.Read<uint32_t>(off);
-            d.stream2 = textureData.Read<uint32_t>(off);
-            d.f10 = textureData.Read<uint32_t>(off);
-            if (d.kind != 2)
-            {
-                d.f11 = textureData.Read<uint32_t>(off);
-                d.mipChainOffset = textureData.Read<uint32_t>(off);
-                if (d.kind == 0)
-                    d.f13 = textureData.Read<uint32_t>(off);
-                d.minLevelSize = textureData.Read<uint32_t>(off);
-            }
-            uint32_t maxMips = 1;
-            for (auto size = std::max({d.width, d.height, d.depth}); size > 1; size >>= 1)
-                ++maxMips;
-            if (!d.width || !d.height || d.width > 16384 || d.height > 16384 || d.depth > 2048 ||
-                (d.kind == 2 && !d.depth) || d.mipLevels > maxMips)
-                throw std::runtime_error("RZTexture: invalid texture dimensions or mip count");
-            return d;
-        }
-
-        void Write(CMChunk& textureData) const
-        {
-            textureData.Append<uint32_t>(kind);
-            textureData.Append<uint32_t>(flags);
-            if (flags & 2)
-                for (float scale : lightmapScale)
-                    textureData.Append(scale);
-            if (flags & 4)
-                textureData.Append(normalScale);
-            textureData.Append(width);
-            if (kind != 1)
-                textureData.Append(height);
-            if (kind == 2)
-                textureData.Append(depth);
-            textureData.Append(mipLevels);
-            textureData.Append(headerUnknown);
-            textureData.Append(d3dFormat);
-            textureData.Append(stream0);
-            textureData.Append(stream1);
-            textureData.Append(stream2);
-            textureData.Append(f10);
-            if (kind != 2)
-            {
-                textureData.Append(f11);
-                textureData.Append(mipChainOffset);
-                if (kind == 0)
-                    textureData.Append(f13);
-                textureData.Append(minLevelSize);
-            }
-        }
+        static Descriptor Parse(const CMChunk& textureData);
+        void Write(CMChunk& textureData) const;
 
         XenosTexture::D3DFormat Format() const { return XenosTexture::D3DFormat::Decode(d3dFormat); }
 
@@ -194,6 +123,8 @@ public:
 
     uint32_t PreviewWidth() const { return desc.PreviewWidth(); }
     std::vector<uint8_t> DecodeLevel0() const;
+    std::vector<uint8_t> ToDds() const;
+    void ReplaceDds(const std::vector<uint8_t>& file);
 
     static RZTexture FromRGBA8(const std::string& name, const uint8_t* rgba, uint32_t width, uint32_t height,
                                uint32_t d3dFormat = XenosTexture::D3DFormat::kA8R8G8B8Tiled)
@@ -220,35 +151,8 @@ public:
         NormalMap
     };
 
-    static RZTexture FromDds(const std::string& name, const std::vector<uint8_t>& file, bool baseLevelOnly = false,
-                             DdsColor color = DdsColor::Gamma, float scale = 1.0f)
-    {
-        BUDds::Image img = BUDds::Decode(file);
-        if (baseLevelOnly && img.levels.size() > 1)
-            img.levels.resize(1);
-        uint32_t format = XenosTexture::kFormat_DXT4_5;
-        if (img.fourCC == BUDds::kDXT1)
-            format = XenosTexture::kFormat_DXT1;
-        else if (img.fourCC == BUDds::kDXT3)
-            format = XenosTexture::kFormat_DXT2_3;
-        if (color == DdsColor::NormalMap && format != XenosTexture::kFormat_DXT4_5)
-            throw std::runtime_error("RZTexture::FromDds: a normal map is DXT5 (" + name + ")");
-
-        RZTexture t;
-        t.name = name;
-        t.nameCRC = BUCRC().Generate(name);
-        t.desc.flags = color == DdsColor::NormalMap ? Descriptor::kNormalMap : 1;
-        t.desc.normalScale = scale;
-        t.desc.width = img.width;
-        t.desc.height = img.height;
-        t.desc.mipLevels = static_cast<uint32_t>(img.levels.size());
-        const uint32_t base = color == DdsColor::NormalMap ? XenosTexture::D3DFormat::kDXT5TiledNormalMap
-                              : color == DdsColor::Linear  ? XenosTexture::D3DFormat::kDXT1TiledLinearColor
-                                                           : XenosTexture::D3DFormat::kDXT5Tiled;
-        t.desc.d3dFormat = (base & ~0x3Fu) | format;
-        t.SetLevels(img.levels);
-        return t;
-    }
+    static RZTexture FromDds(const std::string& name, const std::vector<uint8_t>& file,
+                             bool baseLevelOnly = false, DdsColor color = DdsColor::Gamma, float scale = 1.0f);
 
     // Lays linear mip levels out as retail does and sets the descriptor's mip fields to match.
     void SetLevels(const std::vector<BUDds::Level>& levels)
