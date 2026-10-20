@@ -28,6 +28,7 @@ set(PKZLIB_SQUISH "${PKZLIB_TEXTURES}/libsquish/lib/src")
 add_library(pkzlib_textures STATIC
     Graphics/XenosTexture.cpp
     BaseUtils/BUPng.cpp
+    BaseUtils/BUDds.cpp
     Resource/RZTexture.cpp
     "${PKZLIB_SQUISH}/alpha.cpp"
     "${PKZLIB_SQUISH}/clusterfit.cpp"
