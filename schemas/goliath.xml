@@ -28,10 +28,10 @@
   <chunk id="0x11" name="Gen_LevelHeader">
     <layout version="3" size="264">
       <field name="packageId" offset="0x00" type="u32" display="hex"/>
-      <field name="headerCount" offset="0x04" type="u16"/>
+      <field name="headerRev" offset="0x04" type="u16"/>
       <field name="reserved" offset="0x06" type="u16" display="hex"/>
-      <field name="name" offset="0x08" type="ascii" length="128"/>
-      <field name="secondaryName" offset="0x88" type="ascii" length="128"/>
+      <field name="buildInfo" offset="0x08" type="ascii" length="128"/>
+      <field name="toolVersion" offset="0x88" type="ascii" length="128"/>
     </layout>
   </chunk>
 

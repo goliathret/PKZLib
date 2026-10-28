@@ -120,7 +120,7 @@ namespace selftest
         for (size_t offset : { 100, 104, 108, 112 })
             PutBE32(chunk.data, offset, 1);
         chunk.Append<uint32_t>(textureCRC);
-        chunk.Append<uint32_t>(0);
+        chunk.Append<uint32_t>(0x01000000);
         chunk.Append<uint32_t>(0);
         chunk.AppendBytes(std::string(128, 'x').data(), 128);
         for (int i = 0; i < 4; ++i)
@@ -133,6 +133,9 @@ namespace selftest
         const size_t pass = chunk.data.size();
         chunk.data.resize(pass + 188);
         PutBE32(chunk.data, pass, 0x42);
+        PutBE32(chunk.data, pass + 176, CMChunkMaterialInfo::kPassMarker);
+        PutBE32(chunk.data, pass + 180, CMChunkMaterialInfo::kTechniqueDepth);
+        PutBE32(chunk.data, pass + 184, CMChunkMaterialInfo::kVariantSkinned);
         chunk.Append<uint32_t>(88);
         const size_t declaration = chunk.data.size();
         chunk.data.resize(declaration + 88);
@@ -171,6 +174,15 @@ namespace selftest
               "vertex declarations decode stream offsets and fetch formats");
         Check(material.passes.size() == 1 && material.ShaderContainer(material.passes[0].vertex).empty(),
               "an empty vertex shader record exports no container");
+        Check(material.clamp == 1 && material.samplers[0].clamp == 1 && material.stages.size() == 1 &&
+                  material.stages[0].sampler == 0 && material.stages[0].uvSet == 1,
+              "samplers and stages decode their clamp flag, sampler and UV set");
+        Check(material.passes[0].marker == CMChunkMaterialInfo::kPassMarker &&
+                  material.passes[0].technique == CMChunkMaterialInfo::kTechniqueDepth &&
+                  material.passes[0].variant == CMChunkMaterialInfo::kVariantSkinned &&
+                  declaration->technique == CMChunkMaterialInfo::kTechniqueDepth && material.passes[0].vertex.key == 1 &&
+                  material.passes[0].vertex.objectSize == CMChunkMaterialInfo::kVertexShaderObjectSize,
+              "passes decode their marker, technique, vertex variant and shader key");
 
         CMChunk truncated = chunk;
         truncated.data.pop_back();

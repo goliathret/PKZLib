@@ -91,14 +91,14 @@ void CompressedMipRoundTrip()
                  std::vector<uint8_t>(size_t((side + 3) / 4) * ((side + 3) / 4) * bpb, uint8_t(side))});
         texture.SetLevels(levels);
         const auto size = texture.gpuData.size();
-        const auto offset = texture.desc.mipChainOffset;
+        const auto low = texture.desc;
         auto dds = BUDds::Decode(texture.ToDds());
         Check(dds.levels.size() == levels.size(), "DDS export lost mips");
         for (size_t i = 0; i < levels.size(); ++i)
             Check(dds.levels[i].data == levels[i].data, "DDS export recompressed native blocks");
         dds.levels[2].data[0] ^= 0xFF;
         texture.ReplaceDds(BUDds::Encode(dds));
-        Check(texture.gpuData.size() == size && texture.desc.mipChainOffset == offset &&
+        Check(texture.gpuData.size() == size && texture.desc.SameLowHeader(low) &&
                   texture.Levels()[2].data == dds.levels[2].data,
               "DDS import changed the layout or mip bytes");
         const auto before = texture.gpuData;
