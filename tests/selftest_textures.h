@@ -46,7 +46,11 @@ namespace selftest
                 rgba[i * 4 + 0] = uint8_t(i); rgba[i * 4 + 1] = uint8_t(i * 3); rgba[i * 4 + 2] = uint8_t(i * 7); rgba[i * 4 + 3] = 255;
             }
             const RZTexture t = RZTexture::FromRGBA8("SelfTest_8888", rgba.data(), W, H);
-            Check(t.gpuData.size() == 16384, "8888 texture data is padded to 16 KB");
+            Check(t.gpuData.size() == 8192 && t.gpuData.size() == t.desc.Layout().Total(),
+                  "8888 texture data is exactly its XG layout (64x32 texel pitch, 4 KB aligned)");
+            Check(t.desc.lowDataOffset == 0xFFFFFFFFu && t.desc.lowLevels == 1 && t.desc.lowWidth == W &&
+                      t.desc.lowHeight == H,
+                  "a single-level texture has no low-quality chain");
             Check(t.DecodeLevel0() == rgba, "8888 tile/untile/decode round-trips");
         }
 
@@ -114,9 +118,40 @@ namespace selftest
             for (uint32_t s = 64; s >= 8; s /= 2)
                 levels.push_back({ s, s, std::vector<uint8_t>(size_t((s + 3) / 4) * ((s + 3) / 4) * 8, 0x11) });
             t.SetLevels(levels);
-            Check(t.gpuData.size() == 3 * 8192 && t.desc.mipChainOffset == 0x4020 && t.desc.f13 == 2 &&
-                      t.desc.minLevelSize == 0x00100010,
-                  "a mip chain starting in the packed tail points at its level's blocks");
+            Check(t.gpuData.size() == 3 * 8192 && t.desc.lowDataOffset == 0x4020 && t.desc.lowLevels == 2 &&
+                      t.desc.lowWidth == 16 && t.desc.lowHeight == 16,
+                  "a mip chain starting in the packed tail points at its level's linear block offset");
+            const std::vector<BUDds::Level> back = t.Levels();
+            bool same = back.size() == levels.size();
+            for (size_t i = 0; same && i < back.size(); ++i)
+                same = back[i].width == levels[i].width && back[i].data == levels[i].data;
+            Check(same, "mip levels read back from the XG layout");
+        }
+
+        {
+            RZTexture t;
+            t.desc.width = t.desc.height = 128;
+            t.desc.d3dFormat = 0x28007F02;
+            std::vector<BUDds::Level> levels;
+            for (uint32_t s = 128; s >= 1; s /= 2)
+                levels.push_back({ s, s, std::vector<uint8_t>(size_t(s) * s, uint8_t(s)) });
+            t.SetLevels(levels);
+            Check(t.gpuData.size() == 16384 + 4096 + 4096 + 4096 && t.desc.lowDataOffset == 16384 + 4096 &&
+                      t.desc.lowLevels == 6 && t.desc.lowWidth == 32,
+                  "L8 levels are 4 KB aligned and the low chain starts at level 2");
+        }
+
+        {
+            RZTexture t;
+            t.desc.width = 16;
+            t.desc.height = 64;
+            t.desc.d3dFormat = XenosTexture::D3DFormat::kDXT5Tiled;
+            std::vector<BUDds::Level> levels;
+            for (uint32_t w = 16, h = 64; h >= 1; w = std::max(1u, w / 2), h /= 2)
+                levels.push_back({ w, h, std::vector<uint8_t>(size_t((w + 3) / 4) * ((h + 3) / 4) * 16, 0x22) });
+            t.SetLevels(levels);
+            Check(t.gpuData.size() == 0x4000 && t.desc.lowDataOffset == 0x4010 && t.desc.lowLevels == 5,
+                  "a wholly packed texture's low offset points past its base (retail quirk)");
         }
 
         {

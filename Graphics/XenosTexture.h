@@ -14,7 +14,8 @@ namespace XenosTexture
         kFormat_DXT1 = 18,
         kFormat_DXT2_3 = 19,
         kFormat_DXT4_5 = 20,
-        kFormat_DXN = 26,
+        kFormat_16_16_16_16 = 26,
+        kFormat_DXN = 49,
         kFormat_DXT1_AS_16_16_16_16 = 51,
         kFormat_DXT2_3_AS_16_16_16_16 = 52,
         kFormat_DXT4_5_AS_16_16_16_16 = 53,
@@ -68,6 +69,55 @@ namespace XenosTexture
     uint32_t PackedMipLevel(uint32_t width, uint32_t height);
     void PackedMipOffset(uint32_t width, uint32_t height, uint32_t mip, const D3DFormat& f, uint32_t& xBlocks,
                          uint32_t& yBlocks);
+
+    constexpr uint32_t kXGHeaderExNonPacked = 1;
+    constexpr uint32_t kXGHeaderExBorder = 2;
+    constexpr uint32_t kXGContiguousMipOffset = 0xFFFFFFFFu;
+
+    struct Layout
+    {
+        struct Subresource
+        {
+            uint32_t level = 0;
+            uint32_t offset = 0;
+            uint32_t sliceSize = 0;
+            uint32_t pitch = 0;
+            uint32_t rows = 0;
+            uint32_t depthSlices = 1;
+            bool packed = false;
+        };
+
+        struct Level
+        {
+            uint32_t width = 0, height = 0, depth = 1;
+            uint32_t subresource = 0;
+            bool packed = false;
+            uint32_t tailX = 0, tailY = 0;
+        };
+
+        uint32_t faces = 1;
+        bool volume = false;
+        uint32_t blockDim = 1;
+        uint32_t bytesPerBlock = 0;
+        uint32_t packedLevel = 0;
+        uint32_t baseSize = 0;
+        uint32_t mipSize = 0;
+        std::vector<Subresource> subresources;
+        std::vector<Level> levels;
+
+        uint32_t Total() const { return baseSize + mipSize; }
+        const Subresource& Of(uint32_t level) const { return subresources[levels[level].subresource]; }
+
+        size_t BlockOffset(uint32_t level, uint32_t x, uint32_t y, uint32_t z, const D3DFormat& f) const;
+    };
+
+    std::vector<uint8_t> UntileLevel(const Layout& layout, uint32_t level, uint32_t face, const uint8_t* gpu, size_t size,
+                                     const D3DFormat& f);
+    void TileLevel(const Layout& layout, uint32_t level, uint32_t face, const std::vector<uint8_t>& linear,
+                   std::vector<uint8_t>& gpu, const D3DFormat& f);
+
+    Layout ComputeLayout(uint32_t width, uint32_t height, uint32_t depth, uint32_t levels, uint32_t faces, bool volume,
+                         const D3DFormat& f, uint32_t xgFlags = 0);
 
     std::vector<uint8_t> Untile(const uint8_t* data, size_t size, uint32_t width, uint32_t height, const D3DFormat& f);
     std::vector<uint8_t> Tile(const uint8_t* linear, uint32_t width, uint32_t height, const D3DFormat& f);

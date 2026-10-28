@@ -10,7 +10,7 @@
 namespace PKChunkBuilders
 {
 
-    inline CMChunk PackageHeader(uint32_t packageId, const std::string& nameA, const std::string& nameB = "",
+    inline CMChunk PackageHeader(uint32_t packageId, const std::string& buildInfo, const std::string& toolVersion = "",
                                  bool littleEndian = false, bool wideLength = false)
     {
         CMChunk c = CMChunk::Leaf(Gen_LevelHeader, 3, {}, wideLength);
@@ -20,8 +20,8 @@ namespace PKChunkBuilders
         c.Append<uint16_t>(0);
         char a[128] = {};
         char b[128] = {};
-        std::strncpy(a, nameA.c_str(), sizeof(a) - 1);
-        std::strncpy(b, nameB.c_str(), sizeof(b) - 1);
+        std::strncpy(a, buildInfo.c_str(), sizeof(a) - 1);
+        std::strncpy(b, toolVersion.c_str(), sizeof(b) - 1);
         c.AppendBytes(a, sizeof(a));
         c.AppendBytes(b, sizeof(b));
         return c;

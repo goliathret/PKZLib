@@ -48,7 +48,8 @@ class FieldDumpTests(unittest.TestCase):
             decoded = F.Decoder(package, schemas, 32).chunk(chunks[1], schema, layout)
             values = {item["name"]: item["value"] for item in decoded["fields"]}
             self.assertEqual(values["packageId"], 0x7EE)
-            self.assertEqual(values["name"], "Main")
+            self.assertEqual(values["headerRev"], 2)
+            self.assertEqual(values["buildInfo"], "Main")
             data.close()
 
     def test_eot_primitive_record_and_packed_counts(self):

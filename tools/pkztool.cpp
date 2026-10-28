@@ -315,10 +315,11 @@ namespace
         {
             const RZTexture t = RZTexture::Load(pkg, h);
             const XenosTexture::D3DFormat f = t.desc.Format();
-            std::printf("%-56s %5ux%-5u mips %u %-10s %s%s d3dfmt %08X data %zu dim %u depth %u mipchain %08X min %08X\n",
+            std::printf("%-56s %5ux%-5u mips %u %-10s %s%s d3dfmt %08X data %zu dim %u depth %u low %08X %u %ux%u\n",
                         t.name.c_str(), t.desc.width, t.desc.height, t.desc.mipLevels, f.Name(),
                         f.tiled ? "tiled" : "linear", t.desc.Is2D() ? "" : " (not 2D)", t.desc.d3dFormat,
-                        t.gpuData.size(), t.desc.kind, t.desc.depth, t.desc.mipChainOffset, t.desc.minLevelSize);
+                        t.gpuData.size(), t.desc.kind, t.desc.depth, t.desc.lowDataOffset, t.desc.lowLevels,
+                        t.desc.lowWidth, t.desc.lowHeight);
         }
         catch (const std::exception& e)
         {
@@ -400,7 +401,7 @@ namespace
             {
 
                 std::vector<uint8_t> raw;
-                CMChunk tmp = CMChunk::Leaf(Texture_Data, 7, {});
+                CMChunk tmp = CMChunk::Leaf(Texture_Data, RZTexture::kTextureDataVersion, {});
                 tmp.isLittleEndian = gLittleEndian;
                 t.desc.Write(tmp);
                 raw.insert(raw.end(), tmp.data.begin(), tmp.data.end());

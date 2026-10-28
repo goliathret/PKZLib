@@ -1,5 +1,6 @@
 #include "XenosTexture.h"
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -113,6 +114,134 @@ namespace XenosTexture
         uint32_t zBlocks = 0;
         texture_util::GetPackedMipOffset(width, height, 1, static_cast<xenos::TextureFormat>(f.format), mip, xBlocks,
                                          yBlocks, zBlocks);
+    }
+
+    Layout ComputeLayout(uint32_t width, uint32_t height, uint32_t depth, uint32_t levels, uint32_t faces, bool volume,
+                         const D3DFormat& f, uint32_t xgFlags)
+    {
+        Layout layout;
+        layout.faces = faces;
+        layout.volume = volume;
+        layout.blockDim = f.BlockDim();
+        layout.bytesPerBlock = f.BytesPerBlock();
+        if (!layout.bytesPerBlock)
+            throw std::runtime_error(std::string("XenosTexture: unsupported format ") + f.Name());
+        if (xgFlags & kXGHeaderExBorder)
+            throw std::runtime_error("XenosTexture: border textures are not supported");
+        if (!width || !height || !levels || !faces)
+            throw std::runtime_error("XenosTexture: empty texture layout");
+        depth = volume ? std::max(1u, depth) : 1;
+
+        const uint32_t bd = layout.blockDim, bpb = layout.bytesPerBlock;
+        const uint32_t tile = xenos::kTextureTileWidthHeight;
+        const bool packs = !(xgFlags & kXGHeaderExNonPacked);
+        layout.packedLevel = packs ? PackedMipLevel(width, height) : UINT32_MAX;
+        const auto addSurface = [&](uint32_t level, uint32_t offset, uint32_t w, uint32_t h, uint32_t d) {
+            Layout::Subresource s;
+            s.level = level;
+            s.offset = offset;
+            s.pitch = rex::align((w + bd - 1) / bd, tile);
+            s.rows = rex::align((h + bd - 1) / bd, tile);
+            s.depthSlices = volume ? rex::align(d, 4u) : 1;
+            s.sliceSize = rex::align(s.pitch * s.rows * bpb * s.depthSlices, 4096u);
+            s.packed = level == layout.packedLevel;
+            layout.subresources.push_back(s);
+            return s.sliceSize * faces;
+        };
+
+        layout.baseSize = addSurface(0, 0, width, layout.packedLevel == 0 ? rex::next_pow2(height) : height, depth);
+        if (levels > 1 && layout.packedLevel > 0)
+        {
+            uint32_t offset = layout.baseSize;
+            for (uint32_t level = 1; level <= std::min(levels - 1, layout.packedLevel); ++level)
+                offset += addSurface(level, offset, std::max(1u, rex::next_pow2(width) >> level),
+                                     std::max(1u, rex::next_pow2(height) >> level),
+                                     std::max(1u, rex::next_pow2(depth) >> level));
+            layout.mipSize = offset - layout.baseSize;
+        }
+
+        for (uint32_t level = 0; level < levels; ++level)
+        {
+            Layout::Level l;
+            l.width = std::max(1u, width >> level);
+            l.height = std::max(1u, height >> level);
+            l.depth = std::max(1u, depth >> level);
+            l.subresource = std::min<uint32_t>(level, uint32_t(layout.subresources.size()) - 1);
+            const Layout::Subresource& s = layout.subresources[l.subresource];
+            l.packed = s.packed && level >= s.level;
+            if (l.packed)
+                PackedMipOffset(width, height, level, f, l.tailX, l.tailY);
+            layout.levels.push_back(l);
+        }
+        return layout;
+    }
+
+    size_t Layout::BlockOffset(uint32_t level, uint32_t x, uint32_t y, uint32_t z, const D3DFormat& f) const
+    {
+        const Level& l = levels[level];
+        const Subresource& s = subresources[l.subresource];
+        x += l.tailX;
+        y += l.tailY;
+        if (!f.tiled)
+            return ((size_t(z) * s.rows + y) * s.pitch + x) * bytesPerBlock;
+        const uint32_t bpbLog2 = Log2(bytesPerBlock);
+        if (volume)
+            return size_t(texture_util::GetTiledOffset3D(int32_t(x), int32_t(y), int32_t(z), s.pitch, s.rows, bpbLog2));
+        return TiledOffset2D(x, y, s.pitch, bpbLog2);
+    }
+
+    namespace
+    {
+        template <typename Visit>
+        void ForEachLevelBlock(const Layout& layout, uint32_t level, uint32_t face, const D3DFormat& f, Visit visit)
+        {
+            if (level >= layout.levels.size() || face >= layout.faces)
+                throw std::runtime_error("XenosTexture: level or face outside the layout");
+            const Layout::Level& l = layout.levels[level];
+            const Layout::Subresource& s = layout.Of(level);
+            const uint32_t bd = layout.blockDim, bpb = layout.bytesPerBlock;
+            const uint32_t blocksW = (l.width + bd - 1) / bd, blocksH = (l.height + bd - 1) / bd;
+            const size_t start = s.offset + size_t(face) * s.sliceSize;
+            for (uint32_t z = 0; z < l.depth; ++z)
+                for (uint32_t y = 0; y < blocksH; ++y)
+                    for (uint32_t x = 0; x < blocksW; ++x)
+                        visit(((size_t(z) * blocksH + y) * blocksW + x) * bpb, start + layout.BlockOffset(level, x, y, z, f));
+        }
+
+        size_t LevelSize(const Layout& layout, uint32_t level)
+        {
+            const Layout::Level& l = layout.levels[level];
+            const uint32_t bd = layout.blockDim;
+            return size_t((l.width + bd - 1) / bd) * ((l.height + bd - 1) / bd) * l.depth * layout.bytesPerBlock;
+        }
+    }
+
+    std::vector<uint8_t> UntileLevel(const Layout& layout, uint32_t level, uint32_t face, const uint8_t* gpu, size_t size,
+                                     const D3DFormat& f)
+    {
+        const uint32_t bpb = layout.bytesPerBlock;
+        std::vector<uint8_t> out(level < layout.levels.size() ? LevelSize(layout, level) : 0);
+        ForEachLevelBlock(layout, level, face, f, [&](size_t linear, size_t surface) {
+            if (surface > size || size - surface < bpb)
+                throw std::runtime_error("XenosTexture: GPU data shorter than its layout");
+            std::memcpy(out.data() + linear, gpu + surface, bpb);
+            SwapEndian(out.data() + linear, bpb, f.endian);
+        });
+        return out;
+    }
+
+    void TileLevel(const Layout& layout, uint32_t level, uint32_t face, const std::vector<uint8_t>& linear,
+                   std::vector<uint8_t>& gpu, const D3DFormat& f)
+    {
+        const uint32_t bpb = layout.bytesPerBlock;
+        if (level >= layout.levels.size() || linear.size() != LevelSize(layout, level))
+            throw std::runtime_error("XenosTexture: wrong block count for level " + std::to_string(level));
+        ForEachLevelBlock(layout, level, face, f, [&](size_t source, size_t surface) {
+            if (surface > gpu.size() || gpu.size() - surface < bpb)
+                throw std::runtime_error("XenosTexture: level " + std::to_string(level) + " exceeds its layout");
+            std::memcpy(gpu.data() + surface, linear.data() + source, bpb);
+            SwapEndian(gpu.data() + surface, bpb, f.endian);
+        });
     }
 
     std::vector<uint8_t> Untile(const uint8_t* data, size_t size, uint32_t width, uint32_t height, const D3DFormat& f)

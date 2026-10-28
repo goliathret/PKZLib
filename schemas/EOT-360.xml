@@ -113,9 +113,10 @@
       <bit mask="0x00000020" name="BIT5"/>
       <bit mask="0x00000040" name="BIT6"/>
       <bit mask="0x00000080" name="BIT7"/>
-      <bit mask="0x00000100" name="BIT8"/>
+      <bit mask="0x00000100" name="DEPTH_BIAS"/>
+      <bit mask="0x00000200" name="ALPHA_WRITE"/>
       <bit mask="0x00000400" name="BIT10"/>
-      <bit mask="0x00000800" name="BIT11"/>
+      <bit mask="0x00000800" name="DEPTH_ONLY_PASS"/>
       <bit mask="0x00001000" name="BIT12"/>
       <bit mask="0x00002000" name="MATERIAL_ANIM"/>
       <bit mask="0x00004000" name="BIT14"/>
@@ -155,9 +156,18 @@
       <value value="0x0000001F" name="ALL_SLOTS"/>
     </flagSet>
     <flagSet name="ColPrimFlags" type="u32">
-      <bit mask="0x00000001" name="HAS_EXTRA16"/>
+      <bit mask="0x00000001" name="DF_MASS"/>
       <bit mask="0x00000002" name="BIT1"/>
-      <bit mask="0x00000008" name="HAS_EXTRA4"/>
+      <bit mask="0x00000008" name="DF_MATCH"/>
+    </flagSet>
+    <flagSet name="GOTypeInfoFlags" type="u32">
+      <bit mask="0x00000001" name="ACTIVATE_ON_LOAD"/>
+    </flagSet>
+    <flagSet name="StageParamFlags" type="u16">
+      <bit mask="0x0001" name="VERTEX_COLOR"/>
+      <bit mask="0x0002" name="VERTEX_ALPHA"/>
+      <bit mask="0x0004" name="ENV_MAP"/>
+      <bit mask="0x0800" name="DESC_BIT19"/>
     </flagSet>
     <flagSet name="BoneConstraintFlags" type="u32">
       <bit mask="0x00000002" name="TWO_LIMITS"/>
@@ -214,8 +224,12 @@
     </flagSet>
     <flagSet name="TextureFlags" type="u32">
       <bit mask="0x00000001" name="SRGB"/>
-      <bit mask="0x00000002" name="BIT1"/>
-      <bit mask="0x00000004" name="BIT2"/>
+      <bit mask="0x00000002" name="LIGHTMAP_SCALE"/>
+      <bit mask="0x00000004" name="NORMAL_SCALE"/>
+    </flagSet>
+    <flagSet name="XGHeaderFlags" type="u32">
+      <bit mask="0x00000001" name="NONPACKED"/>
+      <bit mask="0x00000002" name="BORDER"/>
     </flagSet>
   </flagSets>
   <enums>
@@ -261,9 +275,29 @@
       <value value="0" name="Sphere"/>
       <value value="1" name="Capsule"/>
       <value value="2" name="Box"/>
-      <value value="3" name="Hull"/>
+      <value value="3" name="ConvexHull"/>
       <value value="4" name="Type4"/>
-      <value value="5" name="Type5"/>
+      <value value="5" name="Plane"/>
+    </enum>
+    <enum name="MaterialTechnique">
+      <value value="0" name="0G_0SM"/>
+      <value value="1" name="2G_1SM"/>
+      <value value="2" name="4G_1SM"/>
+      <value value="3" name="6G_4SM"/>
+      <value value="4" name="1G_1I_1SM"/>
+      <value value="5" name="Depth"/>
+      <value value="6" name="ConstantColor"/>
+      <value value="7" name="ShadowReceiver"/>
+      <value value="8" name="ZPassNormal"/>
+      <value value="9" name="Prelighted"/>
+      <value value="10" name="SSEdgeExtrude"/>
+    </enum>
+    <enum name="VertexVariant">
+      <value value="0" name="Rigid"/>
+      <value value="1" name="Skinned"/>
+      <value value="2" name="Morph"/>
+      <value value="3" name="SkinnedMorph"/>
+      <value value="4" name="Instanced"/>
     </enum>
     <enum name="EmitterFieldType">
       <value value="1700" name="Base"/>
@@ -278,13 +312,13 @@
       <value value="1" name="World"/>
     </enum>
     <enum name="MaterialAnimChannelType">
-      <value value="0" name="StageUVTransform"/>
+      <value value="0" name="UVTransform"/>
       <value value="1" name="StageColor"/>
-      <value value="2" name="U32Channel2"/>
-      <value value="3" name="F32Channel3"/>
-      <value value="4" name="F32Channel4"/>
-      <value value="5" name="F32Channel5"/>
-      <value value="6" name="Vec4Channel6"/>
+      <value value="2" name="AlphaRef"/>
+      <value value="3" name="EmissiveIntensity"/>
+      <value value="4" name="NormalMapScale"/>
+      <value value="5" name="NormalMap2Scale"/>
+      <value value="6" name="RimLightColor"/>
     </enum>
     <enum name="AnimCueRefKind">
       <value value="1" name="HAnim"/>
@@ -349,25 +383,22 @@
     </struct>
     <struct name="StageParams" size="32">
       <field offset="0" name="color" type="f32[4]"/>
-      <field offset="16" name="unknown" type="f32"/>
-      <field offset="20" name="flags" type="u16"/>
+      <field offset="16" name="param" type="f32"/>
+      <field offset="20" name="flags" type="u16" flags="StageParamFlags"/>
       <field offset="22" name="blendMode" type="u8" enum="StageBlendMode"/>
       <field offset="23" name="sampler" type="u8"/>
       <field offset="24" name="uvSet" type="u8"/>
       <field offset="25" name="maskSampler" type="u8"/>
       <field offset="26" name="maskUvSet" type="u8"/>
       <field offset="27" name="maskComponent" type="char"/>
-      <field offset="28" name="unk28" type="u8"/>
-      <field offset="29" name="unk29" type="u8"/>
-      <field offset="30" name="unk30" type="u8"/>
-      <field offset="31" name="unk31" type="u8"/>
+      <field offset="28" name="defaults" type="u8[4]"/>
     </struct>
     <struct name="SamplerSlot" size="140">
       <field offset="0" name="textureCrc" type="u32"/>
-      <field offset="4" name="addressMode" type="u8"/>
-      <field offset="5" name="unk5" type="u8"/>
+      <field offset="4" name="clamp" type="u8"/>
+      <field offset="5" name="filterFlags" type="u8"/>
       <field offset="6" name="pad6" type="u16"/>
-      <field offset="8" name="runtimeTexture" type="u32"/>
+      <field offset="8" name="dynamicIndex" type="u32"/>
       <field offset="12" name="sourcePath" type="char[128]"/>
     </struct>
     <struct name="ShaderDescription" size="176">
@@ -421,30 +452,30 @@
       <field offset="0" name="declSize" type="u32"/>
       <field offset="4" name="decl" type="bytes" size="@declSize"/>
       <field offset="next" name="declPad" type="bytes" size="(4-@declSize%4)%4"/>
-      <field offset="next" name="id32" type="u32"/>
-      <field offset="next" name="id64" type="u64" if="id32==0"/>
-      <field offset="next" name="size0" type="u32"/>
-      <field offset="next" name="size1" type="u32"/>
-      <field offset="next" name="data0" type="bytes" size="@size0"/>
-      <field offset="next" name="pad0" type="bytes" size="(4-@size0%4)%4"/>
-      <field offset="next" name="data1" type="bytes" size="@size1"/>
-      <field offset="next" name="pad1" type="bytes" size="(4-@size1%4)%4"/>
+      <field offset="next" name="key32" type="u32"/>
+      <field offset="next" name="key64" type="u64" if="key32==0"/>
+      <field offset="next" name="imageSize" type="u32"/>
+      <field offset="next" name="physicalSize" type="u32"/>
+      <field offset="next" name="image" type="bytes" size="@imageSize"/>
+      <field offset="next" name="imagePad" type="bytes" size="(4-@imageSize%4)%4"/>
+      <field offset="next" name="physical" type="bytes" size="@physicalSize"/>
+      <field offset="next" name="physicalPad" type="bytes" size="(4-@physicalSize%4)%4"/>
     </struct>
     <struct name="PixelShaderRecord">
-      <field offset="0" name="id32" type="u32"/>
-      <field offset="next" name="id64" type="u64" if="id32==0"/>
-      <field offset="next" name="size0" type="u32"/>
-      <field offset="next" name="size1" type="u32"/>
-      <field offset="next" name="data0" type="bytes" size="@size0" if="size0"/>
-      <field offset="next" name="pad0" type="bytes" size="(4-@size0%4)%4" if="size0"/>
-      <field offset="next" name="data1" type="bytes" size="@size1" if="size0"/>
-      <field offset="next" name="pad1" type="bytes" size="(4-@size1%4)%4" if="size0"/>
+      <field offset="0" name="key32" type="u32"/>
+      <field offset="next" name="key64" type="u64" if="key32==0"/>
+      <field offset="next" name="imageSize" type="u32"/>
+      <field offset="next" name="physicalSize" type="u32"/>
+      <field offset="next" name="image" type="bytes" size="@imageSize" if="imageSize"/>
+      <field offset="next" name="imagePad" type="bytes" size="(4-@imageSize%4)%4" if="imageSize"/>
+      <field offset="next" name="physical" type="bytes" size="@physicalSize" if="imageSize"/>
+      <field offset="next" name="physicalPad" type="bytes" size="(4-@physicalSize%4)%4" if="imageSize"/>
     </struct>
     <struct name="MaterialPass">
       <field offset="0" name="description" struct="ShaderDescription"/>
-      <field offset="176" name="unk176" type="u32"/>
-      <field offset="180" name="slot" type="u32"/>
-      <field offset="184" name="set" type="u32"/>
+      <field offset="176" name="marker" type="u32"/>
+      <field offset="180" name="technique" type="u32" enum="MaterialTechnique"/>
+      <field offset="184" name="variant" type="u32" enum="VertexVariant"/>
       <field offset="188" name="vertexShader" struct="VertexShaderRecord"/>
       <field offset="next" name="pixelShader" struct="PixelShaderRecord"/>
     </struct>
@@ -493,27 +524,35 @@
     </struct>
     <struct name="ColPrim">
       <field offset="0" name="type" type="u32" enum="ColPrimType"/>
-      <field offset="4" name="bone" type="u32"/>
+      <field offset="4" name="bone" type="s32"/>
       <field offset="8" name="transform" type="f32[16]"/>
-      <field offset="72" name="unknown72" type="u32[6]"/>
-      <field offset="96" name="flags" type="u32" flags="ColPrimFlags"/>
-      <field offset="next" name="extra16" type="f32[4]" if="flags&amp;0x1"/>
-      <field offset="next" name="extra4" type="u32" if="flags&amp;0x8"/>
+      <field offset="72" name="primFlags" type="u32"/>
+      <field offset="76" name="colFlagsObj" type="u32"/>
+      <field offset="80" name="colFlagsEnv" type="u32"/>
+      <field offset="84" name="noCRFlagsObj" type="u32"/>
+      <field offset="88" name="noCRFlagsEnv" type="u32"/>
+      <field offset="92" name="disableColFlags" type="u32"/>
+      <field offset="96" name="dataFlags" type="u32" flags="ColPrimFlags"/>
+      <field offset="next" name="mass" type="f32" if="dataFlags&amp;0x1"/>
+      <field offset="next" name="centerOfMass" type="f32[3]" if="dataFlags&amp;0x1"/>
+      <field offset="next" name="matchCrc" type="u32" if="dataFlags&amp;0x8"/>
       <field offset="next" name="radius" type="f32" if="type==0"/>
       <field offset="next" name="capsule" type="f32[2]" if="type==1"/>
       <field offset="next" name="halfExtents" type="f32[3]" if="type==2"/>
       <field offset="next" name="hull" struct="HullHeader" if="type==3"/>
     </struct>
     <struct name="HullHeader">
-      <field offset="0" name="count0" type="u16"/>
-      <field offset="2" name="count1" type="u16"/>
-      <field offset="4" name="count2" type="u16"/>
-      <field offset="6" name="count3" type="u16"/>
-      <field offset="8" name="counts4to9" type="u16[6]"/>
+      <field offset="0" name="numVertices" type="u16"/>
+      <field offset="2" name="numFaces" type="u16"/>
+      <field offset="4" name="numEdges" type="u16"/>
+      <field offset="6" name="numTriangles" type="u16"/>
+      <field offset="8" name="extremeFaces" type="u16[6]"/>
       <field offset="20" name="center" type="f32[3]"/>
-      <field offset="32" name="params" type="f32[5]"/>
-      <field offset="52" name="zero" type="u32[5]"/>
-      <field offset="72" name="data" type="bytes" size="24*@count0+20*@count1+20*@count2+6*@count3"/>
+      <field offset="32" name="halfExtents" type="f32[3]"/>
+      <field offset="44" name="radius" type="f32"/>
+      <field offset="48" name="innerRadius" type="f32"/>
+      <field offset="52" name="runtimePtrs" type="u32[5]"/>
+      <field offset="72" name="data" type="bytes" size="24*@numVertices+20*@numFaces+20*@numEdges+6*@numTriangles"/>
     </struct>
     <struct name="BlendWeight" size="12">
       <field offset="0" name="bone" type="u32"/>
@@ -948,40 +987,52 @@
     <struct name="Texture2DHeader" size="52">
       <field offset="0" name="width" type="u32"/>
       <field offset="4" name="height" type="u32"/>
-      <field offset="8" name="mipCount" type="u32"/>
-      <field offset="12" name="unk12" type="u32"/>
+      <field offset="8" name="levels" type="u32"/>
+      <field offset="12" name="usage" type="u32"/>
       <field offset="16" name="format" type="u32"/>
-      <field offset="20" name="unk20" type="u32[4]"/>
-      <field offset="36" name="unk36" type="u32"/>
-      <field offset="40" name="unk40" type="u32"/>
-      <field offset="44" name="unk44" type="u32"/>
-      <field offset="48" name="unk48" type="u16[2]"/>
+      <field offset="20" name="expBias" type="u32"/>
+      <field offset="24" name="xgFlags" type="u32" flags="XGHeaderFlags"/>
+      <field offset="28" name="baseOffset" type="u32"/>
+      <field offset="32" name="mipOffset" type="u32"/>
+      <field offset="36" name="pitch" type="u32"/>
+      <field offset="40" name="lowDataOffset" type="u32"/>
+      <field offset="44" name="lowLevels" type="u32"/>
+      <field offset="48" name="lowWidth" type="u16"/>
+      <field offset="50" name="lowHeight" type="u16"/>
     </struct>
     <struct name="TextureCubeHeader" size="44">
-      <field offset="0" name="size" type="u32"/>
-      <field offset="4" name="mipCount" type="u32"/>
-      <field offset="8" name="unk8" type="u32"/>
+      <field offset="0" name="edgeLength" type="u32"/>
+      <field offset="4" name="levels" type="u32"/>
+      <field offset="8" name="usage" type="u32"/>
       <field offset="12" name="format" type="u32"/>
-      <field offset="16" name="unk16" type="u32[4]"/>
-      <field offset="32" name="unk32" type="u32"/>
-      <field offset="36" name="unk36" type="u32"/>
-      <field offset="40" name="unk40" type="u16[2]"/>
+      <field offset="16" name="expBias" type="u32"/>
+      <field offset="20" name="xgFlags" type="u32" flags="XGHeaderFlags"/>
+      <field offset="24" name="baseOffset" type="u32"/>
+      <field offset="28" name="mipOffset" type="u32"/>
+      <field offset="32" name="lowDataOffset" type="u32"/>
+      <field offset="36" name="lowLevels" type="u32"/>
+      <field offset="40" name="lowWidth" type="u16"/>
+      <field offset="42" name="lowHeight" type="u16"/>
     </struct>
     <struct name="TextureVolumeHeader" size="40">
       <field offset="0" name="width" type="u32"/>
       <field offset="4" name="height" type="u32"/>
       <field offset="8" name="depth" type="u32"/>
-      <field offset="12" name="mipCount" type="u32"/>
-      <field offset="16" name="unk16" type="u32"/>
+      <field offset="12" name="levels" type="u32"/>
+      <field offset="16" name="usage" type="u32"/>
       <field offset="20" name="format" type="u32"/>
-      <field offset="24" name="unk24" type="u32[4]"/>
+      <field offset="24" name="expBias" type="u32"/>
+      <field offset="28" name="xgFlags" type="u32" flags="XGHeaderFlags"/>
+      <field offset="32" name="baseOffset" type="u32"/>
+      <field offset="36" name="mipOffset" type="u32"/>
     </struct>
   </structs>
   <chunks>
     <chunk id="0x0011" name="Gen_LevelHeader" version="3">
       <field offset="0" name="packageId" type="u32"/>
-      <field offset="4" name="unknown" type="u32"/>
-      <field offset="8" name="builtBy" type="char[128]"/>
+      <field offset="4" name="headerRev" type="u16"/>
+      <field offset="6" name="reserved" type="u16"/>
+      <field offset="8" name="buildInfo" type="char[128]"/>
       <field offset="136" name="toolVersion" type="char[128]"/>
     </chunk>
     <chunk id="0x0019" name="Gen_Languages" version="1">
@@ -1059,7 +1110,7 @@
       <field offset="0" name="kind" type="u32" enum="TextureKind"/>
       <field offset="4" name="flags" type="u32" flags="TextureFlags"/>
       <field offset="next" name="lightmapScale" type="f32[3]" if="flags&amp;0x2"/>
-      <field offset="next" name="unknown" type="f32" if="flags&amp;0x4"/>
+      <field offset="next" name="normalScale" type="f32" if="flags&amp;0x4"/>
       <field offset="next" name="header2D" struct="Texture2DHeader" if="kind==0"/>
       <field offset="next" name="headerCube" struct="TextureCubeHeader" if="kind==1"/>
       <field offset="next" name="headerVolume" struct="TextureVolumeHeader" if="kind==2"/>
@@ -1079,10 +1130,10 @@
     <chunk id="0x0200" name="GO_Type_Info" version="18">
       <field offset="0" name="kind" type="u32" enum="ResourceType"/>
       <field offset="4" name="transform" type="f32[16]"/>
-      <field offset="68" name="unknownFlag" type="u32"/>
+      <field offset="68" name="flags" type="u32" flags="GOTypeInfoFlags"/>
       <field offset="72" name="parentId" type="u32"/>
-      <field offset="76" name="parentBoneHash" type="u32"/>
-      <field offset="80" name="linkedObj3dId" type="u32"/>
+      <field offset="76" name="parentBoneCrc" type="u32"/>
+      <field offset="80" name="linkedResCrc" type="u32"/>
       <field offset="84" name="obj3d" struct="Obj3DInfo" if="kind==0x102"/>
       <field offset="84" name="emissionCount" type="u32" if="kind==0x103"/>
       <field offset="88" name="fieldCount" type="u32" if="kind==0x103"/>
@@ -1194,52 +1245,52 @@
     </chunk>
     <chunk id="0x0330" name="Geo_MaterialHeader" version="1">
       <field offset="0" name="count" type="u32"/>
-      <field offset="4" name="entries" struct="ValueIndexPair" count="@count"/>
+      <field offset="4" name="anims" struct="CrcIndexPair" count="@count"/>
     </chunk>
     <chunk id="0x0331" name="Geo_MaterialInfo" version="64">
       <field offset="0" name="name" type="char[32]"/>
       <field offset="32" name="materialFlags" type="u32" flags="MaterialFlags"/>
       <field offset="36" name="zero36" type="u32"/>
       <field offset="40" name="zero40" type="u32"/>
-      <field offset="44" name="unk44" type="f32"/>
-      <field offset="48" name="unk48" type="f32"/>
+      <field offset="44" name="specularIntensity" type="f32"/>
+      <field offset="48" name="specularPower" type="f32"/>
       <field offset="52" name="unk52" type="u32"/>
-      <field offset="56" name="unk56" type="f32"/>
-      <field offset="60" name="unk60" type="f32"/>
-      <field offset="64" name="unk64" type="f32"/>
+      <field offset="56" name="normalMapScale" type="f32"/>
+      <field offset="60" name="normalMap2Scale" type="f32"/>
+      <field offset="64" name="emissiveIntensity" type="f32"/>
       <field offset="68" name="unk68" type="f32"/>
       <field offset="72" name="byte72" type="u8"/>
       <field offset="73" name="byte73" type="u8"/>
       <field offset="74" name="byte74" type="u8"/>
-      <field offset="75" name="byte75" type="u8"/>
+      <field offset="75" name="alphaRef" type="u8"/>
       <field offset="76" name="unk76" type="f32"/>
       <field offset="80" name="unk80" type="u32"/>
       <field offset="84" name="unk84" type="f32"/>
       <field offset="88" name="unk88" type="f32"/>
-      <field offset="92" name="unk92" type="f32"/>
-      <field offset="96" name="unk96" type="f32"/>
+      <field offset="92" name="distortionAlpha" type="f32"/>
+      <field offset="96" name="distortionScale" type="f32"/>
       <field offset="100" name="samplerCount" type="u32"/>
       <field offset="104" name="stageCount" type="u32"/>
-      <field offset="108" name="passSlotCount" type="u32"/>
-      <field offset="112" name="passSetCount" type="u32"/>
+      <field offset="108" name="techniqueCount" type="u32"/>
+      <field offset="112" name="variantCount" type="u32"/>
       <field offset="116" name="unk116" type="u32"/>
-      <field offset="120" name="color120" type="u32"/>
-      <field offset="124" name="unk124" type="f32"/>
-      <field offset="128" name="color128" type="u32"/>
-      <field offset="132" name="byte132" type="u8"/>
+      <field offset="120" name="specularColor" type="u32"/>
+      <field offset="124" name="edgeExtrusionBias" type="f32"/>
+      <field offset="128" name="edgeColor" type="u32"/>
+      <field offset="132" name="lightmapSampler" type="u8"/>
       <field offset="133" name="byte133" type="u8"/>
       <field offset="134" name="unk134" type="u16"/>
       <field offset="136" name="text3dStringCrc" type="u32"/>
       <field offset="140" name="text3dTextStyleCrc" type="u32"/>
       <field offset="144" name="text3dLayout" type="u32[17]"/>
-      <field offset="212" name="unk212" type="f32"/>
-      <field offset="216" name="unk216" type="f32"/>
-      <field offset="220" name="unk220" type="f32[4]"/>
-      <field offset="236" name="unk236" type="f32"/>
-      <field offset="240" name="unk240" type="u32"/>
+      <field offset="212" name="depthBias" type="f32"/>
+      <field offset="216" name="rimLightParam" type="f32"/>
+      <field offset="220" name="rimLightColor" type="f32[4]"/>
+      <field offset="236" name="edgeExtrusionThickness" type="f32"/>
+      <field offset="240" name="runtimeFlags" type="u32"/>
       <field offset="244" name="samplers" struct="SamplerSlot" count="@samplerCount"/>
       <field offset="next" name="stageParams" struct="StageParams" count="@stageCount"/>
-      <field offset="next" name="passes" struct="MaterialPass" count="@passSetCount*@passSlotCount"/>
+      <field offset="next" name="passes" struct="MaterialPass" count="@variantCount*@techniqueCount"/>
     </chunk>
     <chunk id="0x0334" name="Geo_SubModels" version="2">
       <field offset="0" name="count" type="u32"/>
@@ -1256,10 +1307,9 @@
       <field offset="next" name="bones" struct="BoneRecord" count="@boneCount"/>
     </chunk>
     <chunk id="0x0387" name="Hierarchy_Collision" version="7">
-      <field offset="0" name="lookupCountA" type="u32"/>
-      <field offset="4" name="lookupCountB" type="u32"/>
-      <field offset="8" name="lookupA" struct="HashIndexPair" count="@lookupCountA"/>
-      <field offset="next" name="lookupB" struct="HashIndexPair" count="@lookupCountB"/>
+      <field offset="0" name="colPrimCount" type="u32"/>
+      <field offset="4" name="ragdollPrimCount" type="u32"/>
+      <field offset="8" name="crcTable" struct="HashIndexPair" count="@colPrimCount+@ragdollPrimCount"/>
       <field offset="next" name="primitives" struct="ColPrim" count="rest"/>
     </chunk>
     <chunk id="0x0389" name="Hierarchy_BonesTRS" version="3">
@@ -1628,7 +1678,7 @@
     </chunk>
     <chunk id="0x089A" name="MaterialAnim_Header" version="2">
       <field offset="0" name="channelCount" type="u32"/>
-      <field offset="4" name="unk4" type="u32"/>
+      <field offset="4" name="flags" type="u32"/>
     </chunk>
     <chunk id="0x089C" name="MaterialAnim_ChannelInfo" version="2">
       <field offset="0" name="type" type="u32" enum="MaterialAnimChannelType"/>
