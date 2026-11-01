@@ -13,6 +13,8 @@ namespace BUDds
         uint32_t height = 0;
         std::vector<uint8_t> data;
         uint32_t depth = 1;
+        size_t offset = 0;
+        size_t rowPitch = 0;
     };
 
     struct Image
@@ -23,6 +25,10 @@ namespace BUDds
         uint32_t blockBytes = 0;
         uint32_t depth = 1;
         bool volume = false;
+        bool cubemap = false;
+        bool luminance = false;
+        size_t Faces() const { return cubemap ? 6 : 1; }
+        size_t Mips() const { return levels.size() / Faces(); }
         uint32_t bitCount = 32;
         uint32_t redMask = 0x00FF0000;
         uint32_t greenMask = 0x0000FF00;
@@ -63,5 +69,7 @@ namespace BUDds
         return Decode(file.data(), file.size());
     }
     std::vector<uint8_t> Encode(const Image& image);
+    std::vector<uint8_t> EncodeRGBA8(const Image& format, const uint8_t* rgba, uint32_t width,
+                                     uint32_t height, uint32_t depth = 1);
     std::vector<uint8_t> DecodeRGBA8(const Image& image, size_t level = 0);
 } // namespace BUDds
