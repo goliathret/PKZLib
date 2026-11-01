@@ -27,6 +27,7 @@ namespace BUDds
             kAlphaOnly = 0x2,
             kFourCC = 0x4,
             kRgb = 0x40,
+            kLuminance = 0x20000,
         };
 
         enum Caps : uint32_t
@@ -96,6 +97,8 @@ namespace BUDds
             if (!image.width || !image.height || !image.depth || image.width > 16384 ||
                 image.height > 16384 || image.depth > 2048)
                 throw std::runtime_error("BUDds: invalid image dimensions");
+            if (image.cubemap && (image.volume || image.width != image.height))
+                throw std::runtime_error("BUDds: invalid cubemap dimensions");
             if (!image.volume && image.depth != 1)
                 throw std::runtime_error("BUDds: a 2D texture cannot have multiple depth slices");
 
@@ -154,15 +157,17 @@ namespace BUDds
                 throw std::runtime_error("BUDds: invalid or truncated DDS header");
 
             const uint32_t caps = ReadU32LE(bytes + 112);
-            if (caps & kCubemap)
-                throw std::runtime_error("BUDds: cubemaps are not supported");
+            image.cubemap = (caps & kCubemap) != 0;
+            if (image.cubemap && (caps & 0xFC00) != 0xFC00)
+                throw std::runtime_error("BUDds: incomplete cubemap faces");
             image.width = ReadU32LE(bytes + 16);
             image.height = ReadU32LE(bytes + 12);
-            image.volume = (caps & kVolume) != 0;
+            image.volume = (caps & kVolume) != 0 || (ReadU32LE(bytes + 8) & kDepth) != 0;
             image.depth = image.volume ? ReadU32LE(bytes + 24) : 1;
 
             const uint32_t pixelFlags = ReadU32LE(bytes + 80);
             image.fourCC = (pixelFlags & kFourCC) ? ReadU32LE(bytes + 84) : 0;
+            image.luminance = (pixelFlags & kLuminance) != 0;
             image.bitCount = ReadU32LE(bytes + 88);
             image.redMask = ReadU32LE(bytes + 92);
             image.greenMask = ReadU32LE(bytes + 96);
@@ -177,9 +182,10 @@ namespace BUDds
                 const uint32_t dimension = ReadU32LE(dx10 + 4);
                 const uint32_t miscFlags = ReadU32LE(dx10 + 8);
                 const uint32_t arraySize = ReadU32LE(dx10 + 12);
-                if (arraySize != 1 || (miscFlags & kDx10Cubemap) || dimension < 2 || dimension > kTexture3D)
-                    throw std::runtime_error("BUDds: arrays and cubemaps are not supported");
+                if (arraySize != 1 || dimension < 2 || dimension > kTexture3D)
+                    throw std::runtime_error("BUDds: texture arrays are not supported");
 
+                image.cubemap = (miscFlags & kDx10Cubemap) != 0;
                 image.volume = dimension == kTexture3D;
                 image.depth = image.volume ? ReadU32LE(bytes + 24) : 1;
                 SetDxgiFormat(image, ReadU32LE(dx10));
@@ -188,7 +194,7 @@ namespace BUDds
 
             if (!image.fourCC)
             {
-                if (!(pixelFlags & (kRgb | kAlphaOnly)))
+                if (!(pixelFlags & (kRgb | kAlphaOnly | kLuminance)))
                     throw std::runtime_error("BUDds: DDS pixels must be RGB or alpha");
                 if (!(pixelFlags & (kAlphaPixels | kAlphaOnly)))
                     image.alphaMask = 0;
@@ -209,26 +215,32 @@ namespace BUDds
                 throw std::runtime_error("BUDds: row pitch is shorter than the image");
             const bool paddedRows = topPitch > topRow && topPitch == AlignRow(topRow);
 
-            uint32_t width = image.width, height = image.height, depth = image.depth;
-            for (uint32_t mip = 0; mip < count; ++mip)
+            for (size_t face = 0; face < image.Faces(); ++face)
             {
-                const size_t rowBytes = RowBytes(image, width);
-                const size_t rows = RowCount(image, height) * depth;
-                size_t pitch = paddedRows ? AlignRow(rowBytes) : rowBytes;
-                if (mip == 0)
-                    pitch = topPitch;
-                const size_t needed = pitch * rows;
-                if (offset > size || needed > size - offset)
-                    throw std::runtime_error("BUDds: file ends inside mip " + std::to_string(mip));
+                uint32_t width = image.width, height = image.height, depth = image.depth;
+                for (uint32_t mip = 0; mip < count; ++mip)
+                {
+                    const size_t rowBytes = RowBytes(image, width);
+                    const size_t rows = RowCount(image, height) * depth;
+                    size_t pitch = paddedRows ? AlignRow(rowBytes) : rowBytes;
+                    if (mip == 0)
+                        pitch = topPitch;
+                    const size_t needed = pitch * rows;
+                    if (offset > size || needed > size - offset)
+                        throw std::runtime_error("BUDds: file ends inside mip " + std::to_string(mip));
 
-                Level level{width, height, std::vector<uint8_t>(rowBytes * rows), depth};
-                for (size_t row = 0; row < rows; ++row)
-                    std::copy_n(bytes + offset + row * pitch, rowBytes, level.data.data() + row * rowBytes);
-                image.levels.push_back(std::move(level));
-                offset += needed;
-                width = std::max(1u, width / 2);
-                height = std::max(1u, height / 2);
-                depth = std::max(1u, depth / 2);
+                    Level level{width, height, std::vector<uint8_t>(rowBytes * rows), depth};
+                    for (size_t row = 0; row < rows; ++row)
+                        std::copy_n(bytes + offset + row * pitch, rowBytes,
+                                    level.data.data() + row * rowBytes);
+                    level.offset = offset;
+                    level.rowPitch = pitch;
+                    image.levels.push_back(std::move(level));
+                    offset += needed;
+                    width = std::max(1u, width / 2);
+                    height = std::max(1u, height / 2);
+                    depth = std::max(1u, depth / 2);
+                }
             }
         }
 
@@ -247,7 +259,7 @@ namespace BUDds
             {
                 flags |= kPitch;
                 const bool hasRgb = image.redMask || image.greenMask || image.blueMask;
-                pixelFlags = hasRgb ? kRgb : kAlphaOnly;
+                pixelFlags = image.luminance ? kLuminance : hasRgb ? kRgb : kAlphaOnly;
                 if (hasRgb && image.alphaMask)
                     pixelFlags |= kAlphaPixels;
             }
@@ -256,7 +268,9 @@ namespace BUDds
                 flags |= kDepth;
                 caps |= kComplex;
             }
-            if (image.levels.size() > 1)
+            if (image.cubemap)
+                caps |= kComplex;
+            if (image.Mips() > 1)
             {
                 flags |= kMipCount;
                 caps |= kComplex | kMipMap;
@@ -270,7 +284,7 @@ namespace BUDds
             WriteU32(file, 16, image.width);
             WriteU32(file, 20, uint32_t(pitch));
             WriteU32(file, 24, image.volume ? image.depth : 0);
-            WriteU32(file, 28, uint32_t(image.levels.size()));
+            WriteU32(file, 28, uint32_t(image.Mips()));
             WriteU32(file, 76, 32);
             WriteU32(file, 80, pixelFlags);
             WriteU32(file, 84, image.fourCC);
@@ -283,7 +297,7 @@ namespace BUDds
                 WriteU32(file, 104, image.alphaMask);
             }
             WriteU32(file, 108, caps);
-            WriteU32(file, 112, image.volume ? kVolume : 0);
+            WriteU32(file, 112, image.cubemap ? 0xFE00 : image.volume ? kVolume : 0);
             return file;
         }
 
@@ -339,8 +353,11 @@ namespace BUDds
                 for (size_t byte = 0; byte < bytesPerPixel; ++byte)
                     pixel |= uint32_t(level.data[i * bytesPerPixel + byte]) << (byte * 8);
                 rgba[i * 4] = ReadComponent(pixel, image.redMask, alphaOnly ? 255 : 0);
-                rgba[i * 4 + 1] = ReadComponent(pixel, image.greenMask, alphaOnly ? 255 : 0);
-                rgba[i * 4 + 2] = ReadComponent(pixel, image.blueMask, alphaOnly ? 255 : 0);
+                rgba[i * 4 + 1] = image.luminance
+                                      ? rgba[i * 4]
+                                      : ReadComponent(pixel, image.greenMask, alphaOnly ? 255 : 0);
+                rgba[i * 4 + 2] =
+                    image.luminance ? rgba[i * 4] : ReadComponent(pixel, image.blueMask, alphaOnly ? 255 : 0);
                 rgba[i * 4 + 3] = ReadComponent(pixel, image.alphaMask, 255);
             }
             return rgba;
@@ -395,13 +412,20 @@ namespace BUDds
     std::vector<uint8_t> Encode(const Image& image)
     {
         ValidateImage(image);
-        if (image.levels.empty() || image.levels.size() > MaxMipCount(image))
+        if (image.levels.empty() || image.levels.size() % image.Faces() || image.Mips() > MaxMipCount(image))
             throw std::runtime_error("BUDds: invalid mip chain");
 
         auto file = WriteHeader(image);
         uint32_t width = image.width, height = image.height, depth = image.depth;
-        for (const auto& level : image.levels)
+        for (size_t i = 0; i < image.levels.size(); ++i)
         {
+            if (i % image.Mips() == 0)
+            {
+                width = image.width;
+                height = image.height;
+                depth = image.depth;
+            }
+            const auto& level = image.levels[i];
             const size_t needed = RowBytes(image, width) * RowCount(image, height) * depth;
             if (level.width != width || level.height != height || level.depth != depth ||
                 level.data.size() != needed)
@@ -412,6 +436,49 @@ namespace BUDds
             depth = std::max(1u, depth / 2);
         }
         return file;
+    }
+
+    std::vector<uint8_t> EncodeRGBA8(const Image& format, const uint8_t* rgba, uint32_t width,
+                                     uint32_t height, uint32_t depth)
+    {
+        ValidateImage(format);
+        if (format.fourCC)
+        {
+            const uint32_t native = format.fourCC == kDXT1   ? XenosTexture::kFormat_DXT1
+                                    : format.fourCC == kDXT3 ? XenosTexture::kFormat_DXT2_3
+                                                             : XenosTexture::kFormat_DXT4_5;
+            std::vector<uint8_t> result;
+            for (uint32_t z = 0; z < depth; ++z)
+            {
+                auto slice = XenosTexture::EncodeRGBA8(rgba + size_t(z) * width * height * 4, width, height,
+                                                       XenosTexture::D3DFormat::Decode(native));
+                result.insert(result.end(), slice.begin(), slice.end());
+            }
+            return result;
+        }
+        auto component = [](uint8_t value, uint32_t mask) -> uint32_t {
+            if (!mask)
+                return 0;
+            int shift = 0;
+            while (!(mask & 1))
+            {
+                mask >>= 1;
+                ++shift;
+            }
+            return uint32_t((uint64_t(value) * mask + 127) / 255) << shift;
+        };
+        const size_t pixels = size_t(width) * height * depth;
+        const size_t bytes = format.bitCount / 8;
+        std::vector<uint8_t> result(pixels * bytes);
+        for (size_t i = 0; i < pixels; ++i)
+        {
+            const uint32_t pixel =
+                component(rgba[i * 4], format.redMask) | component(rgba[i * 4 + 1], format.greenMask) |
+                component(rgba[i * 4 + 2], format.blueMask) | component(rgba[i * 4 + 3], format.alphaMask);
+            for (size_t byte = 0; byte < bytes; ++byte)
+                result[i * bytes + byte] = uint8_t(pixel >> (byte * 8));
+        }
+        return result;
     }
 
     std::vector<uint8_t> DecodeRGBA8(const Image& image, size_t mip)

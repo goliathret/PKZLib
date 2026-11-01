@@ -30,6 +30,8 @@ add_library(pkzlib_textures STATIC
     BaseUtils/BUPng.cpp
     BaseUtils/BUDds.cpp
     Resource/RZTexture.cpp
+    Resource/Texture/PC.cpp
+    Resource/Texture/Xbox360.cpp
     "${PKZLIB_SQUISH}/alpha.cpp"
     "${PKZLIB_SQUISH}/clusterfit.cpp"
     "${PKZLIB_SQUISH}/colourblock.cpp"
@@ -94,6 +96,10 @@ if(PKZLIB_BUILD_TESTS)
     add_executable(pkzlib_environment_test tests/environment_test.cpp)
     target_link_libraries(pkzlib_environment_test PRIVATE pkzlib)
     add_test(NAME pkzlib_environment COMMAND pkzlib_environment_test)
+
+    add_executable(pkzlib_pc_texture_test tests/pc_texture_test.cpp)
+    target_link_libraries(pkzlib_pc_texture_test PRIVATE pkzlib)
+    add_test(NAME pkzlib_pc_texture COMMAND pkzlib_pc_texture_test)
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
