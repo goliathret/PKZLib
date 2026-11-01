@@ -43,6 +43,7 @@ class PKPackage
 public:
     std::vector<CMChunk> rootChunks;
     std::vector<uint8_t> tailBytes;
+    std::vector<std::string> warnings;
     bool isLittleEndian = false;
 
     bool wasCompressed = false;
@@ -88,10 +89,32 @@ public:
 
     void ReadFromMemoryAutoEndian(const std::vector<uint8_t>& bytes)
     {
+        std::vector<uint8_t> decompressed;
+        const std::vector<uint8_t>* raw = &bytes;
+        wasCompressed = BUDecompress::IsCompressed(bytes.data(), bytes.size());
+        if (wasCompressed)
+        {
+            BUDecompress decoder;
+            decoder.ParseHeader(bytes.data(), bytes.size());
+            compressHeader = decoder.mCompHeader;
+            decompressed = BUDecompress::Decompress(bytes);
+            raw = &decompressed;
+        }
+        if (raw->size() >= 12)
+        {
+            const uint32_t big = BUDecompress::ReadU32(raw->data(), true) & CMChunk::kIdMask;
+            const uint32_t little = BUDecompress::ReadU32(raw->data(), false) & CMChunk::kIdMask;
+            if (big == Root || little == Root)
+            {
+                isLittleEndian = little == Root;
+                ParseChunks(raw->data(), raw->size());
+                return;
+            }
+        }
         isLittleEndian = false;
         try
         {
-            ReadFromMemory(bytes);
+            ParseChunks(raw->data(), raw->size());
             if (!rootChunks.empty() && rootChunks.front().GetMaskedID() != 0)
                 return;
         }
@@ -99,7 +122,7 @@ public:
         {
         }
         isLittleEndian = true;
-        ReadFromMemory(bytes);
+        ParseChunks(raw->data(), raw->size());
     }
 
     std::vector<uint8_t> Serialize() const
@@ -130,8 +153,14 @@ public:
     BUCompress::Options ContainerOptions() const
     {
         BUCompress::Options options;
-        if (compressHeader.uiSectorSize)
+        if (wasCompressed)
+        {
             options.sectorSize = compressHeader.uiSectorSize;
+            options.bigChunkSize = std::max(compressHeader.uiBigChunkSize, compressHeader.uiSectorSize);
+            options.bigEndian32 = compressHeader.bigEndian;
+            options.wideOffsets = compressHeader.wideOffsets;
+            options.lookupFirst = compressHeader.lookupFirst;
+        }
         return options;
     }
 
@@ -208,6 +237,7 @@ private:
     {
         rootChunks.clear();
         tailBytes.clear();
+        warnings.clear();
         PKMemoryStreamBuf buf(data, size);
         std::istream stream(&buf);
         size_t pos = 0;
@@ -220,10 +250,61 @@ private:
                 break;
             }
             stream.seekg(static_cast<std::streamoff>(pos));
-            CMChunk chunk = CMChunk::Read(stream, isLittleEndian);
+            CMChunk chunk;
+            if (RecoverLegacyPCTexturePost(data, size, pos, stream, chunk))
+                warnings.push_back("Recovered a malformed texture container length at " +
+                                   std::to_string(pos));
+            else
+            {
+                const uint32_t id = BUDecompress::ReadU32(data + pos, !isLittleEndian);
+                const bool wide = (id >> 24) == 0x80;
+                const size_t headerSize = wide ? 16 : 12;
+                if (size - pos < headerSize)
+                    throw std::runtime_error("Truncated chunk header at file offset " + std::to_string(pos));
+                const uint64_t length = wide ? BUDecompress::ReadU64(data + pos + 8, !isLittleEndian)
+                                             : BUDecompress::ReadU32(data + pos + 8, !isLittleEndian);
+                if (length > size - pos - headerSize)
+                    throw std::runtime_error("Chunk at file offset " + std::to_string(pos) +
+                                             " extends beyond the end of the file");
+                chunk = CMChunk::Read(stream, isLittleEndian);
+            }
             pos += static_cast<size_t>(chunk.HeaderSize() + chunk.length);
             rootChunks.push_back(std::move(chunk));
         }
+    }
+
+    // Recover only complete SD PC texture records with an invalid outer length.
+    bool RecoverLegacyPCTexturePost(const uint8_t* data, size_t size, size_t pos, std::istream& stream,
+                            CMChunk& result)
+    {
+        if (!isLittleEndian || size - pos < 24 ||
+            BUDecompress::ReadU32(data + pos, false) != Gen_PostLoadData ||
+            BUDecompress::ReadU32(data + pos + 4, false) >> 16 != 1)
+            return false;
+        const uint32_t declared = BUDecompress::ReadU32(data + pos + 8, false);
+        if (declared <= size - pos - 12)
+            return false;
+        const size_t header = pos + 12;
+        if (BUDecompress::ReadU32(data + header, false) != GenSub_ResourceHeader ||
+            BUDecompress::ReadU32(data + header + 4, false) != 3 ||
+            BUDecompress::ReadU32(data + header + 8, false) != 88 || size - header < 112)
+            return false;
+        const size_t texture = header + 100;
+        if (BUDecompress::ReadU32(data + texture, false) != Texture_Data ||
+            BUDecompress::ReadU32(data + texture + 4, false) != 5)
+            return false;
+        const uint32_t length = BUDecompress::ReadU32(data + texture + 8, false);
+        if (length < 156 || length > size - texture - 12 ||
+            BUDecompress::ReadU32(data + texture + 12 + 28, false) != 0x20534444)
+            return false;
+        result = CMChunk::Container(Gen_PostLoadData, uint16_t(BUDecompress::ReadU32(data + pos + 4, false)));
+        result.isLittleEndian = true;
+        result.offset = pos;
+        stream.seekg(static_cast<std::streamoff>(header));
+        result.AddChild(CMChunk::Read(stream, true));
+        result.AddChild(CMChunk::Read(stream, true));
+        result.ComputeLength();
+        return true;
     }
 
     static bool IsZeroRun(const uint8_t* p, size_t n)

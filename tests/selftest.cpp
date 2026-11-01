@@ -97,10 +97,13 @@ namespace
         std::vector<uint8_t> data(300000);
         for (size_t i = 0; i < data.size(); ++i)
             data[i] = static_cast<uint8_t>((i * 7) ^ (i >> 5));
-        for (bool be32 : { true, false })
+        for (int format = 0; format < 4; ++format)
         {
+            const bool be32 = format == 0;
             BUCompress::Options opt;
             opt.bigEndian32 = be32;
+            opt.wideOffsets = format >= 2;
+            opt.lookupFirst = format == 3;
             const std::vector<uint8_t> packed = BUCompress::Compress(data, opt);
             Check(BUDecompress::IsCompressed(packed.data(), packed.size()), "container magic recognised");
             BUDecompress d;
@@ -108,7 +111,9 @@ namespace
             Check(d.mCompHeader.uiUncompFileSize == data.size(), "container records the uncompressed size");
             Check(d.mLookup.size() == (data.size() + 0x7FFF) / 0x8000, "lookup table has one entry per 32K sector");
             const std::vector<uint8_t> back = BUDecompress::Decompress(packed);
-            Check(back == data, be32 ? "32-bit big-endian container round-trips" : "64-bit little-endian container round-trips");
+            Check(back == data, "container table variants round-trip");
+            Check(d.mCompHeader.bigEndian == be32 && d.mCompHeader.wideOffsets == (!be32 && opt.wideOffsets) &&
+                d.mCompHeader.lookupFirst == opt.lookupFirst, "container table format is retained");
 
             bool lookupOk = true;
             for (size_t j = 0; j < d.mLookup.size(); ++j)
