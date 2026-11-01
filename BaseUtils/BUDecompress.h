@@ -18,6 +18,9 @@ struct BUCompressHeader
     uint64_t uiUncompFileSize;
     uint32_t uiNbSectorsCompData;
     uint32_t uiPadding;
+    bool bigEndian = true;
+    bool wideOffsets = false;
+    bool lookupFirst = false;
 };
 
 class BUDecompress
@@ -65,60 +68,84 @@ public:
     {
         if (size < 28)
             throw std::runtime_error("BUDecompress: file too small for a header");
-        if (ReadU32(file, true) == kMagic)
-        {
-            mbBigEndian32 = true;
-            mCompHeader.uiMagicNumber = kMagic;
-            mCompHeader.uiSectorSize = ReadU32(file + 4, true);
-            mCompHeader.uiTotalHeaderSize = ReadU32(file + 8, true);
-            mCompHeader.uiBigChunkSize = ReadU32(file + 12, true);
-            mCompHeader.uiNbSectorsCompData = ReadU32(file + 16, true);
-            mCompHeader.uiCompDataSize = ReadU32(file + 20, true);
-            mCompHeader.uiUncompFileSize = ReadU32(file + 24, true);
-            mCompHeader.uiPadding = 0;
-        }
-        else if (ReadU32(file, false) == kMagic)
-        {
-            if (size < 40)
-                throw std::runtime_error("BUDecompress: file too small for a 64-bit header");
-            mbBigEndian32 = false;
-            mCompHeader.uiMagicNumber = kMagic;
-            mCompHeader.uiSectorSize = ReadU32(file + 4, false);
-            mCompHeader.uiTotalHeaderSize = ReadU32(file + 8, false);
-            mCompHeader.uiBigChunkSize = ReadU32(file + 12, false);
-            mCompHeader.uiCompDataSize = ReadU64(file + 16, false);
-            mCompHeader.uiUncompFileSize = ReadU64(file + 24, false);
-            mCompHeader.uiNbSectorsCompData = ReadU32(file + 32, false);
-            mCompHeader.uiPadding = ReadU32(file + 36, false);
-        }
-        else
-        {
+        const bool bigEndian = ReadU32(file, true) == kMagic;
+        if (!bigEndian && ReadU32(file, false) != kMagic)
             throw std::runtime_error("BUDecompress: bad magic");
-        }
-
-        const uint32_t sectorSize = mCompHeader.uiSectorSize;
-        if (sectorSize == 0 || mCompHeader.uiTotalHeaderSize > size)
+        mCompHeader = {};
+        mCompHeader.uiMagicNumber = kMagic;
+        mCompHeader.bigEndian = bigEndian;
+        mbBigEndian32 = bigEndian;
+        mCompHeader.uiSectorSize = ReadU32(file + 4, bigEndian);
+        mCompHeader.uiTotalHeaderSize = ReadU32(file + 8, bigEndian);
+        mCompHeader.uiBigChunkSize = ReadU32(file + 12, bigEndian);
+        if (!mCompHeader.uiSectorSize || mCompHeader.uiTotalHeaderSize > size)
             throw std::runtime_error("BUDecompress: bad header sizes");
-
-        muiNbSectors = mCompHeader.uiNbSectorsCompData;
-        const uint64_t nbUncompSectors = (mCompHeader.uiUncompFileSize + sectorSize - 1) / sectorSize;
-
-        size_t off = mbBigEndian32 ? 28 : 40;
-        const size_t entry = mbBigEndian32 ? 4 : 8;
-        if (off + muiNbSectors * entry + nbUncompSectors * 4 > mCompHeader.uiTotalHeaderSize)
-            throw std::runtime_error("BUDecompress: tables exceed the header");
-
-        mSectorTable.resize(muiNbSectors);
-        for (uint32_t i = 0; i < muiNbSectors; ++i, off += entry)
-            mSectorTable[i] = mbBigEndian32 ? ReadU32(file + off, true) : ReadU64(file + off, false);
-
-        mLookup.resize(static_cast<size_t>(nbUncompSectors));
-        for (uint64_t j = 0; j < nbUncompSectors; ++j, off += 4)
-            mLookup[static_cast<size_t>(j)] = ReadU32(file + off, mbBigEndian32);
-
-        muiDecompSize = static_cast<uint32_t>(mCompHeader.uiUncompFileSize);
+        if (!bigEndian && (ReadTables(file, size, true, false) || ReadTables(file, size, true, true)))
+            return;
+        if (ReadTables(file, size, false, false) || ReadTables(file, size, false, true))
+            return;
+        throw std::runtime_error("BUDecompress: invalid sector or lookup tables");
     }
 
+private:
+    bool ReadTables(const uint8_t* file, size_t size, bool wide, bool lookupFirst)
+    {
+        const bool big = mCompHeader.bigEndian;
+        const size_t fixed = wide ? 40 : 28;
+        const size_t entry = wide ? 8 : 4;
+        if (size < fixed)
+            return false;
+        const uint64_t compressed = wide ? ReadU64(file + 16, big) : ReadU32(file + 20, big);
+        const uint64_t uncompressed = wide ? ReadU64(file + 24, big) : ReadU32(file + 24, big);
+        const uint32_t sectors = ReadU32(file + (wide ? 32 : 16), big);
+        const uint32_t sectorSize = mCompHeader.uiSectorSize;
+        const uint64_t headerSize = mCompHeader.uiTotalHeaderSize;
+        if (headerSize < fixed || compressed > size - headerSize ||
+            sectors != (compressed + sectorSize - 1) / sectorSize)
+            return false;
+        const uint64_t lookupCount = uncompressed / sectorSize + (uncompressed % sectorSize != 0);
+        if (lookupCount > headerSize / 4 || sectors > headerSize / entry)
+            return false;
+        const size_t lookupOffset = lookupFirst ? fixed : fixed + size_t(sectors) * entry;
+        const size_t tableOffset =
+            lookupFirst ? (fixed + size_t(lookupCount) * 4 + entry - 1) / entry * entry : fixed;
+        if (lookupOffset + lookupCount * 4 > headerSize || tableOffset + size_t(sectors) * entry > headerSize)
+            return false;
+        std::vector<uint64_t> table;
+        uint64_t previous = 0;
+        for (uint32_t i = 0; i < sectors; ++i)
+        {
+            const auto* address = file + tableOffset + size_t(i) * entry;
+            const uint64_t end = wide ? ReadU64(address, big) : ReadU32(address, big);
+            if (end <= previous || end > uncompressed)
+                return false;
+            table.push_back(end);
+            previous = end;
+        }
+        if (previous != uncompressed)
+            return false;
+        std::vector<uint32_t> lookup;
+        for (uint64_t i = 0; i < lookupCount; ++i)
+        {
+            const auto sector = ReadU32(file + lookupOffset + size_t(i) * 4, big);
+            if (sector >= sectors)
+                return false;
+            lookup.push_back(sector);
+        }
+        mSectorTable = std::move(table);
+        mLookup = std::move(lookup);
+        muiNbSectors = sectors;
+        muiDecompSize = static_cast<uint32_t>(uncompressed);
+        mCompHeader.uiCompDataSize = compressed;
+        mCompHeader.uiUncompFileSize = uncompressed;
+        mCompHeader.uiNbSectorsCompData = sectors;
+        mCompHeader.uiPadding = wide ? ReadU32(file + 36, big) : 0;
+        mCompHeader.wideOffsets = wide;
+        mCompHeader.lookupFirst = lookupFirst;
+        return true;
+    }
+
+public:
     uint64_t SectorStart(uint32_t sector) const { return sector ? mSectorTable[sector - 1] : 0; }
     uint64_t SectorEnd(uint32_t sector) const { return mSectorTable[sector]; }
 
@@ -195,6 +222,8 @@ struct BUCompressOptions
     uint32_t bigChunkSize = BUDecompress::kDefaultBigChunkSize;
     int level = Z_BEST_SPEED;
     bool bigEndian32 = true;
+    bool wideOffsets = true;
+    bool lookupFirst = false;
 };
 
 class BUCompress
@@ -249,9 +278,14 @@ public:
             }
         }
 
-        const size_t fixedHeader = opt.bigEndian32 ? 28 : 40;
-        const size_t entry = opt.bigEndian32 ? 4 : 8;
-        const size_t tablesSize = fixedHeader + nbSectors * entry + lookup.size() * 4;
+        const bool wide = !opt.bigEndian32 && opt.wideOffsets;
+        const size_t fixedHeader = wide ? 40 : 28;
+        const size_t entry = wide ? 8 : 4;
+        const size_t lookupEnd = fixedHeader + lookup.size() * 4;
+        const size_t tableStart = opt.lookupFirst ? (lookupEnd + entry - 1) / entry * entry : fixedHeader;
+        const size_t tablesSize = opt.lookupFirst
+                                      ? tableStart + size_t(nbSectors) * entry
+                                      : fixedHeader + size_t(nbSectors) * entry + lookup.size() * 4;
         const uint64_t headerSize = ((tablesSize + opt.sectorSize - 1) / opt.sectorSize) * opt.sectorSize;
 
         const uint64_t compDataSize = nbSectors ? uint64_t(nbSectors - 1) * opt.sectorSize + lastUsed : 0;
@@ -273,13 +307,11 @@ public:
         put32(opt.sectorSize);
         put32(static_cast<uint32_t>(headerSize));
         put32(maxSectorSpan);
-        if (opt.bigEndian32)
+        if (!wide)
         {
             put32(nbSectors);
             put32(static_cast<uint32_t>(compDataSize));
             put32(static_cast<uint32_t>(size));
-            for (uint64_t v : table)
-                put32(static_cast<uint32_t>(v));
         }
         else
         {
@@ -287,11 +319,27 @@ public:
             put64le(size);
             put32(nbSectors);
             put32(0);
-            for (uint64_t v : table)
-                put64le(v);
         }
-        for (uint32_t v : lookup)
-            put32(v);
+        auto putTable = [&] {
+            for (uint64_t value : table)
+                if (wide)
+                    put64le(value);
+                else
+                    put32(static_cast<uint32_t>(value));
+        };
+        if (opt.lookupFirst)
+        {
+            for (uint32_t value : lookup)
+                put32(value);
+            out.resize(tableStart, 0xAA);
+            putTable();
+        }
+        else
+        {
+            putTable();
+            for (uint32_t value : lookup)
+                put32(value);
+        }
         out.resize(static_cast<size_t>(headerSize), 0);
         for (const auto& s : sectors)
             out.insert(out.end(), s.begin(), s.end());

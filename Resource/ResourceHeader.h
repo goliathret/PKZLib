@@ -39,16 +39,25 @@ public:
         c.isLittleEndian = littleEndian;
         c.Append<uint32_t>(crc);
         c.Append<uint32_t>(type);
-        c.Append<uint32_t>(languageMask);
-        if (wideOffset)
+        if (version <= 3 && !wideOffset)
         {
             c.Append<uint32_t>(qualityLevel);
-            c.Append<uint64_t>(dataOffset);
+            c.Append<uint32_t>(languageMask);
+            c.Append<uint32_t>(static_cast<uint32_t>(dataOffset));
         }
         else
         {
-            c.Append<uint32_t>(static_cast<uint32_t>(dataOffset));
-            c.Append<uint32_t>(qualityLevel);
+            c.Append<uint32_t>(languageMask);
+            if (wideOffset)
+            {
+                c.Append<uint32_t>(qualityLevel);
+                c.Append<uint64_t>(dataOffset);
+            }
+            else
+            {
+                c.Append<uint32_t>(static_cast<uint32_t>(dataOffset));
+                c.Append<uint32_t>(qualityLevel);
+            }
         }
         c.Append<uint32_t>(postLoadDataCRC);
         char buf[kNameSize] = {};
@@ -122,17 +131,25 @@ private:
         size_t offset = 0;
         uiCRC             = Read<uint32_t>(offset);
         uiResourceType    = Read<uint32_t>(offset);
-        uiLanguageMask    = Read<uint32_t>(offset);
-        if (bWideOffset)
+        if (version <= 3 && !bWideOffset)
         {
             uiQualityLevel = Read<uint32_t>(offset);
-            uiDataOffset   = Read<uint64_t>(offset);
+            uiLanguageMask = Read<uint32_t>(offset);
+            uiDataOffset = Read<uint32_t>(offset);
         }
         else
         {
-
-            uiDataOffset   = Read<uint32_t>(offset);
-            uiQualityLevel = Read<uint32_t>(offset);
+            uiLanguageMask = Read<uint32_t>(offset);
+            if (bWideOffset)
+            {
+                uiQualityLevel = Read<uint32_t>(offset);
+                uiDataOffset = Read<uint64_t>(offset);
+            }
+            else
+            {
+                uiDataOffset = Read<uint32_t>(offset);
+                uiQualityLevel = Read<uint32_t>(offset);
+            }
         }
         uiPostLoadDataCRC = Read<uint32_t>(offset);
         ReadBytes(offset, zName, sizeof(zName));
