@@ -76,7 +76,7 @@ ChannelFlags FlagsFor(ChannelKind kind)
     throw std::runtime_error("Invalid animation channel kind.");
 }
 
-ANValue ReadChannelValue(Reader& reader, uint16_t flags, ChannelKind kind)
+ANValue ReadChannelValue(Reader& reader, uint16_t flags, ChannelKind kind, float byteRange)
 {
     ANValue value{};
     if (kind == ChannelKind::Rotation)
@@ -86,7 +86,7 @@ ANValue ReadChannelValue(Reader& reader, uint16_t flags, ChannelKind kind)
             component = int16_t(reader.U16()) / 32767.f;
         return Normalize(value);
     }
-    // ANJobsKF::JobReadKFBone*; these quantization ranges are the EOT Xbox profile.
+    // Byte translation ranges differ between resource versions.
     const bool byte = kind == ChannelKind::Translation && (flags & 8192);
     const bool half = (flags & FlagsFor(kind).half) != 0;
     if (!byte)
@@ -94,7 +94,7 @@ ANValue ReadChannelValue(Reader& reader, uint16_t flags, ChannelKind kind)
     for (int i = 0; i < 3; ++i)
     {
         if (byte)
-            value[i] = int8_t(reader.U8()) * (.05f / 127.f);
+            value[i] = int8_t(reader.U8()) * (byteRange / 127.f);
         else if (half)
         {
             const float multiplier = kind == ChannelKind::Translation ? 10.f / 32767.f : 1.f / 16383.f;
@@ -107,7 +107,7 @@ ANValue ReadChannelValue(Reader& reader, uint16_t flags, ChannelKind kind)
 }
 
 void ReadChannel(Reader& reader, std::vector<RZHAnim::Segment>& keys, uint16_t flags, ChannelKind kind,
-                 float time, float interval)
+                 float time, float interval, float byteRange)
 {
     const auto encoding = FlagsFor(kind);
     if (!(flags & (encoding.current | encoding.next)))
@@ -126,18 +126,18 @@ void ReadChannel(Reader& reader, std::vector<RZHAnim::Segment>& keys, uint16_t f
         if (kind == ChannelKind::Scale && (flags & 256))
             key.from = {1, 1, 1, 0};
         else
-            key.from = ReadChannelValue(reader, flags, kind);
+            key.from = ReadChannelValue(reader, flags, kind, byteRange);
     }
     key.interpolate = (flags & encoding.next) != 0;
-    key.to = key.interpolate ? ReadChannelValue(reader, flags, kind) : key.from;
+    key.to = key.interpolate ? ReadChannelValue(reader, flags, kind, byteRange) : key.from;
     if (flags & encoding.timed)
         key.end = time + reader.U8() * interval;
     keys.push_back(key);
 }
-void Decode(RZHAnim& clip, const CMChunk& chunk, bool little)
+void Decode(RZHAnim& clip, const CMChunk& chunk, bool little, float byteRange)
 {
     if (chunk.version != 5)
-        throw std::runtime_error("Only EOT v5 animation tracks are supported.");
+        throw std::runtime_error("Only v5 animation tracks are supported.");
     Reader r(chunk.data, little);
     while (r.at < r.data.size())
     {
@@ -162,8 +162,11 @@ void Decode(RZHAnim& clip, const CMChunk& chunk, bool little)
         if (flags & 2)
         {
             const uint32_t root = r.U32();
-            if (root & ~127u)
+            if (root & ~(little ? 0x87Fu : 0x7Fu))
                 throw std::runtime_error("Unknown animation root-motion flags.");
+            // PC tracks can include another root word.
+            if (root & 0x800)
+                r.Skip(4);
             for (int bit = 0; bit < 7; ++bit)
                 if (root & (1u << bit))
                     r.Skip(12);
@@ -188,9 +191,9 @@ void Decode(RZHAnim& clip, const CMChunk& chunk, bool little)
             else
                 throw std::runtime_error("Unknown animation track encoding.");
             auto& track = clip.tracks[index];
-            ReadChannel(r, track.scale, bits, ChannelKind::Scale, time, clip.info.interval);
-            ReadChannel(r, track.translation, bits, ChannelKind::Translation, time, clip.info.interval);
-            ReadChannel(r, track.rotation, bits, ChannelKind::Rotation, time, clip.info.interval);
+            ReadChannel(r, track.scale, bits, ChannelKind::Scale, time, clip.info.interval, byteRange);
+            ReadChannel(r, track.translation, bits, ChannelKind::Translation, time, clip.info.interval, byteRange);
+            ReadChannel(r, track.rotation, bits, ChannelKind::Rotation, time, clip.info.interval, byteRange);
         }
         r.Align(4);
         if (!morphs && r.at != end)
@@ -207,7 +210,7 @@ RZHAnim RZHAnim::Load(const PKPackage& package, const CMChunk& resource, LoadMod
     const auto* h = resource.FindChild(GenSub_ResourceHeader);
     const auto* info = Find(resource, HAnim_Info);
     if (!h || !info || info->version != 21)
-        throw std::runtime_error("Missing EOT v21 animation info.");
+        throw std::runtime_error("Missing v21 animation info.");
     CMChunkResourceHeader header(*h);
     if (header.GetResourceType() != kCMResourceType_HAnim)
         throw std::runtime_error("Resource is not an animation.");
@@ -261,7 +264,9 @@ RZHAnim RZHAnim::Load(const PKPackage& package, const CMChunk& resource, LoadMod
     std::function<void(const CMChunk&)> read = [&](const CMChunk& c) {
         if (c.GetMaskedID() == HAnim_Resource)
         {
-            Decode(clip, c, package.isLittleEndian);
+            // SD uses a wider byte translation range.
+            const float byteRange = header.version == 3 && package.isLittleEndian ? .25f : .05f;
+            Decode(clip, c, package.isLittleEndian, byteRange);
             ++buffers;
         }
         for (auto& child : c.children)

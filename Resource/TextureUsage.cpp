@@ -67,13 +67,12 @@ void TextureUsageIndex::Build(const PKPackage* source)
             }
             else
             {
-                size_t material = 0;
-                chunk.ForEachDescendant([&](const CMChunk& child) {
-                    if (child.GetMaskedID() != Geo_MaterialInfo)
-                        return;
-                    owner.material = material++;
-                    AddMaterial(owner, CMChunkMaterialInfo::Parse(child));
-                });
+                const auto materials = RZGeometry::LoadMaterials(*package, header);
+                for (size_t i = 0; i < materials.size(); ++i)
+                {
+                    owner.material = i;
+                    AddMaterial(owner, materials[i]);
+                }
             }
         }
         catch (const std::exception& error)

@@ -11,8 +11,8 @@ RZHierarchy RZHierarchy::Load(const CMChunk& resource, bool little)
     const auto* bones = Find(resource, Hierarchy_Bones);
     const auto* trs = Find(resource, Hierarchy_BonesTRS);
     const auto* names = Find(resource, Hierarchy_BoneNames);
-    if (!header || !bones || bones->version != 9)
-        throw std::runtime_error("Missing EOT v9 hierarchy bones.");
+    if (!header || !bones || (bones->version != 9 && bones->version != 11 && bones->version != 12))
+        throw std::runtime_error("Missing supported hierarchy bones (v9, v11 or v12).");
     RZHierarchy result;
     CMChunkResourceHeader h(*header);
     if (h.GetResourceType() != kCMResourceType_Hierarchy)
@@ -20,8 +20,10 @@ RZHierarchy RZHierarchy::Load(const CMChunk& resource, bool little)
     result.name = h.GetName();
     result.crc = h.GetCRC();
     Reader r(bones->data, little);
-    const size_t count = r.U32();
-    r.Skip(8);
+    const size_t count = bones->version == 12 ? r.U8() : r.U32();
+    if (bones->version == 12)
+        r.Skip(3);
+    r.Skip(bones->version == 11 ? 12 : bones->version == 12 ? 4 : 8);
     if (!count || count > 512)
         throw std::runtime_error("Invalid hierarchy bone count.");
     r.Require(count * (8 + 148));
@@ -43,7 +45,14 @@ RZHierarchy RZHierarchy::Load(const CMChunk& resource, bool little)
         for (auto& column : bone.inverseBind.m)
             for (float& x : column)
                 x = r.F32();
-        bone.parent = r.U32();
+        if (bones->version >= 11)
+        {
+            const auto parent = r.U16();
+            bone.parent = parent == UINT16_MAX ? UINT32_MAX : parent;
+            r.Skip(2);
+        }
+        else
+            bone.parent = r.U32();
         r.Skip(16);
         if (bone.parent != UINT32_MAX && bone.parent >= count)
             throw std::runtime_error("Hierarchy parent index is out of range.");

@@ -125,6 +125,15 @@ void DecodeAndMapping()
     {
         auto package = Fixture(little);
         auto clip = RZHAnim::Load(package, package.rootChunks[0]);
+        if (little)
+        {
+            auto& data = package.rootChunks[1].children.back();
+            data.data[6] |= 2;
+            data.data.insert(data.data.begin() + 48, {0, 8, 0, 0, 0, 0, 0, 0});
+            size_t at = 8;
+            Put32(data, 8, data.Read<uint32_t>(at) + 8);
+            clip = RZHAnim::Load(package, package.rootChunks[0]);
+        }
         auto rig = Rig();
         Check(clip.Map(rig) == std::vector<int>({0, 1}), "CRC table order was mistaken for track order");
         auto pose = clip.Sample(rig, .5f);
@@ -293,6 +302,15 @@ void MetadataAndByteTranslation()
         const auto pose = clip.Sample(Rig(), 0);
         Check(Near(pose[0].translation[0], .05f) && Near(pose[0].translation[1], -.05f),
               "EOT byte translation range was confused with another platform's profile");
+        if (little)
+        {
+            const auto header = CMChunkResourceHeader::Build(99, kCMResourceType_HAnim, 31, 0, 4096, 0,
+                                                             "test clip", true, false, 3);
+            package.rootChunks[0].children[0] = package.rootChunks[1].children[0] = header;
+            const auto sd = RZHAnim::Load(package, package.rootChunks[0]).Sample(Rig(), 0);
+            Check(Near(sd[0].translation[0], .25f) && Near(sd[0].translation[1], -.25f),
+                  "SD byte translations collapsed toward the joint origin");
+        }
     }
 }
 
@@ -347,6 +365,24 @@ void HierarchyLoading()
               "Hierarchy CRC/name data was read in table order");
         std::vector<CMTransforms> bind = {rig.bones[0].bind, rig.bones[1].bind};
         Check(Near(rig.WorldPose(bind)[1].m[3][1], 1), "Hierarchy TRS data was not loaded");
+        if (little)
+            for (uint16_t version : {11, 12})
+            {
+                auto updated = resource;
+                auto& b = updated.children[1];
+                b.version = version;
+                b.data[28 + 128 + 2] = b.data[28 + 128 + 3] = 0;
+                if (version == 11)
+                    b.data.insert(b.data.begin() + 12, {2, 0, 0, 0});
+                else
+                {
+                    b.data.erase(b.data.begin() + 4, b.data.begin() + 8);
+                    b.data[1] = 1;
+                }
+                const auto pc = RZHierarchy::Load(updated, true);
+                Check(pc.bones.size() == 2 && pc.bones[0].parent == UINT32_MAX &&
+                          Near(pc.WorldPose(bind)[1].m[3][1], 1), "PC hierarchy count, parent or bind layout changed");
+            }
         auto wrongHeader =
             CMChunkResourceHeader::Build(99, kCMResourceType_Hierarchy, 31, 0, 0, 0, "rig", little);
         Check(Rejects([&] { RZHierarchy::Load(package, CMChunkResourceHeader(wrongHeader)); }),

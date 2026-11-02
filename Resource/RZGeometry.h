@@ -48,21 +48,22 @@ public:
     {
         if (header.GetName().empty())
             throw std::runtime_error("RZGeometry: the resource has no name, so its buffers cannot be matched");
-        if (pkg.isLittleEndian)
-            throw std::runtime_error("RZGeometry: only big-endian geometry is decoded");
-
         RZGeometry geometry;
         geometry.name = header.GetName();
         geometry.materials = LoadMaterials(pkg, header);
 
         const Lod lod = SelectLod(pkg, header);
+        if (lod.vertices->isLittleEndian != pkg.isLittleEndian || lod.indices->isLittleEndian != pkg.isLittleEndian)
+            throw std::runtime_error("RZGeometry: mesh buffers have inconsistent byte order");
         for (const CMChunk& chunk : lod.descriptors->children)
         {
             if (chunk.GetMaskedID() != Geo_GeomMesh)
                 continue;
-            if (!lod.inlined && chunk.version != kMeshVersionEOT)
+            if (chunk.isLittleEndian != pkg.isLittleEndian)
+                throw std::runtime_error("RZGeometry: mesh descriptor has inconsistent byte order");
+            if (!lod.inlined && chunk.version != kMeshVersionEOT && !(pkg.isLittleEndian && chunk.version == 10))
                 throw std::runtime_error("RZGeometry: unsupported Geo_GeomMesh version " + std::to_string(chunk.version) +
-                                         " (expected EOT v8)");
+                                         " for this platform");
             const MeshDescriptor descriptor = MeshDescriptor::Parse(chunk);
             if (!geometry.materials.empty() && descriptor.material >= geometry.materials.size())
                 throw std::runtime_error("RZGeometry: mesh material index is out of range");
@@ -103,16 +104,27 @@ public:
     static std::vector<CMChunkMaterialInfo> LoadMaterials(const PKPackage& pkg, const CMChunkResourceHeader& header)
     {
         std::vector<CMChunkMaterialInfo> materials;
-        if (const CMChunk* resource = FindResource(pkg, header))
+        const auto collect = [&](const CMChunk* resource) {
+            if (!resource)
+                return;
             resource->ForEachDescendant([&](const CMChunk& chunk) {
                 if (chunk.GetMaskedID() == Geo_MaterialInfo)
                     materials.push_back(CMChunkMaterialInfo::Parse(chunk));
             });
+        };
+        collect(FindResource(pkg, header));
+        if (materials.empty())
+        {
+            const auto* post = pkg.FindRootAtOffset(header.GetDataOffset());
+            if (post && DescribesResource(*post, header))
+                collect(post);
+        }
         return materials;
     }
 
 private:
     friend class RZEnvironment;
+    friend class RZGeometrySkin;
     using VertexElement = CMChunkMaterialInfo::VertexElement;
 
     struct MeshDescriptor
@@ -138,6 +150,13 @@ private:
             d.vertexCount = chunk.Read<uint32_t>(at);
             d.indexOffset = chunk.Read<uint32_t>(at);
             d.indexCount = chunk.Read<uint32_t>(at);
+            if (chunk.version == 10)
+            {
+                const uint32_t count = d.material;
+                if (!count || count > chunk.data.size() - 48)
+                    throw std::runtime_error("RZGeometry: invalid mesh material list");
+                d.material = chunk.data[48];
+            }
             if (!d.vertexCount || !d.indexCount || !d.stride)
                 throw std::runtime_error("RZGeometry: invalid mesh descriptor");
             return d;
@@ -170,6 +189,18 @@ private:
         return candidate.GetResourceType() == kCMResourceType_Geometry && candidate.IsSameResource(header);
     }
 
+    static bool MatchesBuffers(const CMChunkResourceHeader& candidate, const CMChunkResourceHeader& header)
+    {
+        if (candidate.GetResourceType() != kCMResourceType_Geometry)
+            return false;
+        if (candidate.GetCRC() == header.GetCRC())
+            return true;
+        // Some SD packs keep an older buffer CRC.
+        return candidate.isLittleEndian && candidate.version == 3 && header.version == 3 &&
+               candidate.GetName() == header.GetName() && candidate.GetLanguageMask() == header.GetLanguageMask() &&
+               candidate.GetQualityLevel() == header.GetQualityLevel();
+    }
+
     static bool HasInlineBuffers(const CMChunk& chunk)
     {
         for (const CMChunk& lod : chunk.children)
@@ -188,7 +219,7 @@ private:
         return info->Read<uint32_t>(at);
     }
 
-    static Lod SelectLod(const PKPackage& pkg, const CMChunkResourceHeader& header)
+    static Lod SelectLod(const PKPackage& pkg, const CMChunkResourceHeader& header, bool requireIndices = true)
     {
         const CMChunk* source = nullptr;
         const CMChunk* post = nullptr;
@@ -201,20 +232,25 @@ private:
             if (!post || post->GetMaskedID() != Gen_PostLoadData)
                 throw std::runtime_error("RZGeometry: no Gen_PostLoadData at the data offset of " + header.GetName());
             const CMChunk* postHeader = post->FindChild(GenSub_ResourceHeader);
-            if (!postHeader || CMChunkResourceHeader(*postHeader).GetCRC() != header.GetCRC() ||
-                CMChunkResourceHeader(*postHeader).GetResourceType() != kCMResourceType_Geometry)
+            if (!postHeader || !MatchesBuffers(CMChunkResourceHeader(*postHeader), header))
                 throw std::runtime_error("RZGeometry: the post-load header does not match " + header.GetName());
         }
         else
         {
             source = post = pkg.FindChunkIf(
                 [&](const CMChunk& chunk) { return HasInlineBuffers(chunk) && DescribesResource(chunk, header); });
+            if (!source)
+            {
+                post = pkg.FindRootAtOffset(header.GetDataOffset());
+                if (post && DescribesResource(*post, header))
+                    source = post;
+            }
         }
         if (!source)
             throw std::runtime_error("RZGeometry: the geometry resource or its buffers are missing for " + header.GetName());
 
         Lod lod;
-        lod.inlined = source == post;
+        lod.inlined = source == post && HasInlineBuffers(*source);
         uint32_t level = std::numeric_limits<uint32_t>::max();
         for (const CMChunk& candidate : source->children)
         {
@@ -233,7 +269,8 @@ private:
         const CMChunk* buffers = nullptr;
         for (const CMChunk& candidate : post->children)
         {
-            if (candidate.GetMaskedID() != Geo_GeomLOD || (!lod.inlined && LodIndex(candidate) != level))
+            if (candidate.GetMaskedID() != Geo_GeomLOD || !candidate.FindChild(GenSub_VertexList) ||
+                (!lod.inlined && LodIndex(candidate) != level))
                 continue;
             if (buffers)
                 throw std::runtime_error("RZGeometry: duplicate LOD buffers in " + header.GetName());
@@ -241,7 +278,7 @@ private:
         }
         lod.vertices = buffers ? buffers->FindChild(GenSub_VertexList) : nullptr;
         lod.indices = buffers ? buffers->FindChild(GenSub_IndexList) : nullptr;
-        if (!lod.vertices || !lod.indices)
+        if (!lod.vertices || (requireIndices && !lod.indices))
             throw std::runtime_error("RZGeometry: vertex or index buffers are missing for LOD " + std::to_string(level));
         return lod;
     }
@@ -265,7 +302,11 @@ private:
 
     static Layout DeclaredLayout(const CMChunkMaterialInfo& material, const MeshDescriptor& descriptor)
     {
-        const CMChunkMaterialInfo::VertexDeclaration* declaration = material.FindDeclaration(descriptor.vertexFormat);
+        const auto pc = material.source && material.source->isLittleEndian
+                            ? CMChunkMaterialInfo::PCDeclaration(descriptor.vertexFormat, material.source->version != 41)
+                            : CMChunkMaterialInfo::VertexDeclaration{};
+        const CMChunkMaterialInfo::VertexDeclaration* declaration =
+            pc.elements.empty() ? material.FindDeclaration(descriptor.vertexFormat) : &pc;
         if (!declaration)
             throw std::runtime_error("RZGeometry: no matching vertex declaration for " + material.name);
 
@@ -376,6 +417,11 @@ private:
                     u = readFloat(uv);
                     t = readFloat(uv + 4);
                 }
+                else if (uvFormat == VertexElement::kFormat_16_16_FLOAT)
+                {
+                    u = HalfFloat(readU16(uv));
+                    t = HalfFloat(readU16(uv + 2));
+                }
                 else
                     throw std::runtime_error("RZGeometry: unsupported UV vertex format");
                 if (!std::isfinite(u) || !std::isfinite(t))
@@ -420,6 +466,18 @@ private:
         constexpr float kLimit = 1.0e5f;
         return std::isfinite(x) && std::isfinite(y) && std::isfinite(z) && std::fabs(x) < kLimit && std::fabs(y) < kLimit &&
                std::fabs(z) < kLimit;
+    }
+
+    static float HalfFloat(uint16_t value)
+    {
+        const int exponent = (value >> 10) & 31;
+        const float mantissa = float(value & 1023);
+        const float sign = (value & 0x8000) ? -1.f : 1.f;
+        if (exponent == 0)
+            return sign * std::ldexp(mantissa, -24);
+        if (exponent == 31)
+            return mantissa ? std::numeric_limits<float>::quiet_NaN() : sign * std::numeric_limits<float>::infinity();
+        return sign * std::ldexp(mantissa + 1024, exponent - 25);
     }
 
     static std::vector<uint32_t> DecodeIndices(const CMChunk& indexList, const MeshDescriptor& descriptor)

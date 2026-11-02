@@ -136,6 +136,7 @@ public:
         {
             kFormat_10_11_11 = 16,
             kFormat_16_16 = 25,
+            kFormat_16_16_FLOAT = 31,
             kFormat_32_32_FLOAT = 37,
             kFormat_32_32_32_32_FLOAT = 38,
             kFormat_32_32_32_FLOAT = 57,
@@ -212,6 +213,8 @@ public:
     {
         if (chunk.GetMaskedID() != Geo_MaterialInfo)
             throw std::runtime_error("CMChunkMaterialInfo: not a Geo_MaterialInfo chunk");
+        if (chunk.isLittleEndian)
+            return ParsePC(chunk);
         if (chunk.version != kVersionEOT)
             throw std::runtime_error("CMChunkMaterialInfo: unsupported version " + std::to_string(chunk.version) +
                                      " (expected EOT v64)");
@@ -287,6 +290,8 @@ public:
         return nullptr;
     }
 
+    static VertexDeclaration PCDeclaration(uint32_t format, bool packedSkin = false);
+
     std::vector<uint8_t> ShaderContainer(const ShaderRecord& record) const
     {
         if (!record.virtualSize)
@@ -312,6 +317,7 @@ public:
     }
 
 private:
+    static CMChunkMaterialInfo ParsePC(const CMChunk& chunk);
     class Reader
     {
     public:

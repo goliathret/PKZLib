@@ -230,7 +230,7 @@ namespace selftest
         Check(bounds.mMin.x == -1.0f && bounds.mMax.x == 1.0f && bounds.mMax.y == 1.0f, "Bounds spans every decoded vertex");
 
         pkg.isLittleEndian = true;
-        Check(Throws([&] { RZGeometry::Load(pkg, header); }), "little-endian geometry is refused");
+        Check(Throws([&] { RZGeometry::Load(pkg, header); }), "mixed-endian geometry is refused");
         pkg.isLittleEndian = false;
 
         const CMChunkResourceHeader missing(CMChunkResourceHeader::Build(0, kCMResourceType_Geometry, 0, 0, 0, 0, "other"));

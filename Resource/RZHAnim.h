@@ -34,7 +34,7 @@ public:
     RZAnimInfo info;
     std::vector<Track> tracks;
 
-    // EOT v21 info and v5 packed keys. Metadata loading does not decode the key buffers.
+    // v21 info and v5 packed keys.
     static RZHAnim Load(const PKPackage& package, const CMChunk& resource,
                         LoadMode mode = LoadMode::Keyframes);
     bool IsAdditive() const { return (info.flags & 1) != 0; }
