@@ -95,13 +95,15 @@ public:
             sample.ReadCutsceneData(pkg, chunk);
         else
             throw std::runtime_error("RZAudioSample: not an audio sample chunk");
-        if (!sample.format.IsValid() || sample.data.empty())
+        if ((!sample.IsPC() && !sample.format.IsValid()) || sample.data.empty())
             throw std::runtime_error("RZAudioSample: not a valid XMA2 sample");
         return sample;
     }
 
     std::vector<uint8_t> BuildWave() const
     {
+        if (IsPC())
+            return BuildPCWave();
         std::vector<uint8_t> out;
         out.reserve(12 + 8 + Xma2Format::kSize + 8 + data.size());
         const auto bytes = [&](const char* text) { out.insert(out.end(), text, text + 4); };
@@ -148,13 +150,23 @@ public:
         return out;
     }
 
+    bool IsPC() const { return !pcWaveFormat.empty(); }
+
 private:
+    std::vector<uint8_t> pcWaveFormat;
+    void ReadPCSampleData(const CMChunk& chunk);
+    std::vector<uint8_t> BuildPCWave() const;
     static constexpr size_t kSampleDataHeaderSize = 80;
     static constexpr size_t kCutsceneDataHeaderSize = 20;
     static constexpr size_t kCutsceneHeaderFormatOffset = 24;
 
     void ReadSampleData(const CMChunk& chunk)
     {
+        if (chunk.isLittleEndian)
+        {
+            ReadPCSampleData(chunk);
+            return;
+        }
         if (chunk.data.size() < kSampleDataHeaderSize)
             throw std::runtime_error("RZAudioSample: truncated Audio_SampleData");
         size_t at = 4;

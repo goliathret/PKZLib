@@ -57,6 +57,7 @@ target_compile_features(pkzlib_animation PUBLIC cxx_std_17)
 target_link_libraries(pkzlib_animation PRIVATE zlibstatic)
 
 add_library(pkzlib_resources STATIC
+    Resource/Audio/PC.cpp
     Geo/MaterialPC.cpp
     Resource/RZEnvironment.cpp
     Resource/TextureUsage.cpp)
@@ -105,6 +106,10 @@ if(PKZLIB_BUILD_TESTS)
     add_executable(pkzlib_pc_model_test tests/pc_model_test.cpp)
     target_link_libraries(pkzlib_pc_model_test PRIVATE pkzlib)
     add_test(NAME pkzlib_pc_model COMMAND pkzlib_pc_model_test)
+
+    add_executable(pkzlib_pc_audio_test tests/pc_audio_test.cpp)
+    target_link_libraries(pkzlib_pc_audio_test PRIVATE pkzlib)
+    add_test(NAME pkzlib_pc_audio COMMAND pkzlib_pc_audio_test)
 
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
